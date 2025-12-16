@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResQ Health Training System</title>
+    <script src="https://daily-cdn.daily.co/daily-js.js"></script>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --primary-hover: #1a252f;
+            --accent: #27ae60;
+            --accent-hover: #229954;
+            --error: #e74c3c;
+            --bg-light: #f5f5f5;
+            --bg-white: #ffffff;
+            --text-dark: #2c3e50;
+            --text-light: #7f8c8d;
+            --border-color: #ecf0f1;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-light);
+            color: var(--text-dark);
+        }
+
+        .header {
+            background: var(--primary);
+            color: white;
+            padding: 16px 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Loading State */
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border-color);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            margin-top: 12px;
+            color: var(--text-light);
+            font-size: 14px;
+        }
+
+        /* Error State */
+        .error {
+            background: #fadbd8;
+            border: 1px solid #f5b7b1;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            color: var(--error);
+        }
+
+        .error h2 {
+            margin: 0 0 8px 0;
+            font-size: 18px;
+        }
+
+        .error p {
+            margin: 8px 0;
+            font-size: 14px;
+        }
+
+        /* Control Panel */
+        .control-panel {
+            background: var(--bg-white);
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .control-panel h2 {
+            margin: 0 0 20px 0;
+            font-size: 18px;
+            color: var(--text-dark);
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .control-label {
+            font-weight: 500;
+            font-size: 14px;
+            color: var(--text-dark);
+            min-width: 80px;
+        }
+
+        .toggle-buttons {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .toggle-btn {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: var(--bg-light);
+            color: var(--text-dark);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 150ms ease;
+            flex: 1;
+            text-align: center;
+        }
+
+        .toggle-btn:hover {
+            border-color: var(--primary);
+            background: white;
+        }
+
+        .toggle-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .toggle-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Status Section */
+        .status-section {
+            background: var(--bg-white);
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .status-section h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: var(--text-dark);
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            color: var(--text-light);
+        }
+
+        .status-value {
+            color: var(--text-dark);
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.connected {
+            background: #d5f4e6;
+            color: var(--accent);
+        }
+
+        .status-badge.disconnected {
+            background: #fadbd8;
+            color: var(--error);
+        }
+
+        /* Tablet Feed Monitor */
+        .tablet-feed {
+            background: var(--bg-white);
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .tablet-feed h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: var(--text-dark);
+        }
+
+        .tablet-feed-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+
+        .tablet-feed-placeholder {
+            width: 100%;
+            height: 300px;
+            background: var(--bg-light);
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-light);
+        }
+
+        .tablet-feed-data {
+            width: 100%;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .data-card {
+            background: var(--bg-light);
+            padding: 12px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .data-card-label {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-bottom: 4px;
+        }
+
+        .data-card-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        /* Room Info */
+        .room-info {
+            background: var(--bg-light);
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--text-light);
+            word-break: break-all;
+        }
+
+        .room-info strong {
+            color: var(--text-dark);
+        }
+
+        /* Hidden Video/Audio Elements */
+        video, audio {
+            display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .container {
+                padding: 12px;
+            }
+
+            .control-panel {
+                padding: 16px;
+            }
+
+            .controls {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏥 ResQ Health Training System</h1>
+    </div>
+
+    <div class="container" id="app">
+        <div class="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Initializing system...</div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG_REPO = "https://raw.githubusercontent.com/resqhealthai/daily-orchestration/main";
+        const CONFIG_URL = `${CONFIG_REPO}/config.json`;
+
+        // State
+        let callFrame = null;
+        let currentMode = null;
+        let currentLocation = null;
+        let currentRoom = null;
+        let roomUrl = null;
+        let macMiniName = null;
+        let participantMap = new Map();
+
+        // Utility: Get URL parameters
+        function getUrlParam(name) {
+            const params = new URLSearchParams(window.location.search);
+            return params.get(name);
+        }
+
+        // Utility: Log with context
+        function log(message, data = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            console.log(`[${timestamp}] ${message}`, data || '');
+        }
+
+        // Render loading state
+        function renderLoading(message = "Initializing system...") {
+            document.getElementById("app").innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div class="loading-text">${message}</div>
+                </div>
+            `;
+        }
+
+        // Render error state
+        function renderError(title, message) {
+            log("ERROR: " + title, message);
+            document.getElementById("app").innerHTML = `
+                <div class="error">
+                    <h2>${title}</h2>
+                    <p>${message}</p>
+                    <p style="font-size: 12px; margin-top: 12px; opacity: 0.7;">
+                        Mode: ${currentMode || 'unknown'} | 
+                        Location: ${currentLocation || 'unknown'} | 
+                        Room: ${currentRoom || 'unknown'}
+                    </p>
+                </div>
+            `;
+        }
+
+        // Fetch configuration
+        async function fetchConfig() {
+            try {
+                log("Fetching configuration from:", CONFIG_URL);
+                const response = await fetch(CONFIG_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const config = await response.json();
+                log("Configuration loaded successfully");
+                return config;
+            } catch (err) {
+                renderError("Configuration Error", `Failed to load config: ${err.message}`);
+                throw err;
+            }
+        }
+
+        // Get Mac Mini name (client-side only)
+        async function getMacMiniName() {
+            // Client cannot access scutil, so we'll use the location param as fallback
+            return "browser-client"; // This will be set by AppleScript only
+        }
+
+        // Initialize based on mode
+        async function initialize() {
+            try {
+                renderLoading("Loading configuration...");
+
+                // Parse URL parameters
+                currentMode = getUrlParam("mode") || "instructor";
+                currentLocation = getUrlParam("location");
+                currentRoom = getUrlParam("room");
+                roomUrl = getUrlParam("roomUrl");
+
+                log("URL Parameters parsed", {
+                    mode: currentMode,
+                    location: currentLocation,
+                    room: currentRoom
+                });
+
+                if (!currentLocation || !currentRoom) {
+                    renderError(
+                        "Invalid Parameters",
+                        "Missing required URL parameters: location and room"
+                    );
+                    return;
+                }
+
+                // Fetch config and validate
+                const config = await fetchConfig();
+                const locationConfig = config.locations[currentLocation];
+                
+                if (!locationConfig && !roomUrl) {
+                    renderError(
+                        "Location Not Found",
+                        `Training location '${currentLocation}' not found in configuration`
+                    );
+                    return;
+                }
+
+                // Use roomUrl from param or from config
+                if (!roomUrl) {
+                    roomUrl = locationConfig.roomUrl;
+                }
+
+                log("Configuration validated", { roomUrl });
+
+                // Initialize Daily.co
+                renderLoading("Connecting to meeting...");
+                await initializeDaily();
+
+                // Render UI based on mode
+                renderLoading("Loading user interface...");
+                
+                switch (currentMode) {
+                    case "instructor":
+                        renderInstructorUI();
+                        break;
+                    case "camera":
+                        renderCameraMode();
+                        break;
+                    case "tablet":
+                        renderTabletMode();
+                        break;
+                    default:
+                        renderError("Invalid Mode", `Unknown mode: ${currentMode}`);
+                }
+            } catch (err) {
+                log("Initialization error", err);
+                renderError("Initialization Error", err.message);
+            }
+        }
+
+        // Initialize Daily.co
+        async function initializeDaily() {
+            try {
+                log("Initializing Daily.co SDK");
+
+                // Create call frame
+                callFrame = window.DailyIframe.createCallObject({
+                    showLeaveButton: false,
+                    showFullscreenButton: false,
+                    showParticipantsButton: false,
+                    iframeStyle: {
+                        display: "none" // Hidden, we control video elements
+                    }
+                });
+
+                // Set up event listeners
+                setupEventListeners();
+
+                // Join room
+                log("Joining room:", roomUrl);
+                await callFrame.join({
+                    url: roomUrl,
+                    userName: getParticipantName(),
+                    camera: getCameraInitialState(),
+                    microphone: getMicInitialState()
+                });
+
+                log("Successfully joined room");
+            } catch (err) {
+                log("Daily.co initialization error", err);
+                throw new Error(`Failed to initialize Daily.co: ${err.message}`);
+            }
+        }
+
+        // Get participant name based on mode
+        function getParticipantName() {
+            switch (currentMode) {
+                case "instructor":
+                    return "Instructor";
+                case "camera":
+                    return "Location-Camera";
+                case "tablet":
+                    return "Tablet-Screen";
+                default:
+                    return "Participant";
+            }
+        }
+
+        // Get initial camera state
+        function getCameraInitialState() {
+            if (currentMode === "instructor") return false;
+            if (currentMode === "camera") return true;
+            if (currentMode === "tablet") return false;
+            return false;
+        }
+
+        // Get initial microphone state
+        function getMicInitialState() {
+            if (currentMode === "instructor") return true;
+            if (currentMode === "camera") return false;
+            if (currentMode === "tablet") return false;
+            return true;
+        }
+
+        // Set up event listeners
+        function setupEventListeners() {
+            // Join event
+            callFrame.on("joined-meeting", async () => {
+                log("Successfully joined meeting");
+                updateRoomStatus();
+            });
+
+            // Participant events
+            callFrame.on("participant-joined", (event) => {
+                log("Participant joined", event.participant?.user_name);
+                participantMap.set(event.participant.session_id, event.participant);
+                updateParticipantList();
+            });
+
+            callFrame.on("participant-updated", (event) => {
+                log("Participant updated", event.participant?.user_name);
+                participantMap.set(event.participant.session_id, event.participant);
+                updateParticipantList();
+                
+                // Update tablet feed if this is tablet participant
+                if (currentMode === "instructor" && event.participant?.user_name === "Tablet-Screen") {
+                    updateTabletFeedData(event.participant);
+                }
+            });
+
+            callFrame.on("participant-left", (event) => {
+                log("Participant left", event.participant?.user_name);
+                participantMap.delete(event.participant.session_id);
+                updateParticipantList();
+            });
+
+            // Error event
+            callFrame.on("error", (err) => {
+                log("Daily.co error", err);
+            });
+
+            // Left meeting
+            callFrame.on("left-meeting", () => {
+                log("Left meeting");
+                renderError(
+                    "Session Ended",
+                    "You have left the training session. Please close this window or click back."
+                );
+            });
+        }
+
+        // Render Instructor UI
+        function renderInstructorUI() {
+            const cameraState = callFrame.localVideo();
+            const micState = callFrame.localAudio();
+
+            document.getElementById("app").innerHTML = `
+                <div class="control-panel">
+                    <h2>Training Controls</h2>
+                    
+                    <div class="controls">
+                        <div class="control-group">
+                            <span class="control-label">📹 Camera</span>
+                            <div class="toggle-buttons">
+                                <button class="toggle-btn ${!cameraState ? 'active' : ''}" 
+                                    onclick="toggleCamera(false)">OFF</button>
+                                <button class="toggle-btn ${cameraState ? 'active' : ''}" 
+                                    onclick="toggleCamera(true)">ON</button>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <span class="control-label">🎤 Microphone</span>
+                            <div class="toggle-buttons">
+                                <button class="toggle-btn ${!micState ? 'active' : ''}" 
+                                    onclick="toggleMicrophone(false)">OFF</button>
+                                <button class="toggle-btn ${micState ? 'active' : ''}" 
+                                    onclick="toggleMicrophone(true)">ON</button>
+                            </div>
+                        </div>
+                        
+                        <div class="control-group">
+                            <span class="control-label">🖥️ Desktop</span>
+                            <div class="toggle-buttons">
+                                <button class="toggle-btn" id="screenshare-btn" 
+                                    onclick="toggleScreenShare()">START</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="status-section">
+                    <h3>Connection Status</h3>
+                    <div class="status-item">
+                        <span class="status-label">Status</span>
+                        <span class="status-value">
+                            <span class="status-badge connected">✓ Connected</span>
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Training Center</span>
+                        <span class="status-value" id="location-display">${currentLocation}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Participants</span>
+                        <span class="status-value" id="participant-count">1</span>
+                    </div>
+                </div>
+
+                <div class="tablet-feed">
+                    <h3>📱 Tablet Feed Monitor</h3>
+                    <div class="tablet-feed-content">
+                        <div class="tablet-feed-placeholder" id="tablet-placeholder">
+                            Waiting for tablet to join...
+                        </div>
+                        <div class="tablet-feed-data" id="tablet-data" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <div class="room-info">
+                    <strong>Room:</strong> ${currentRoom}
+                </div>
+            `;
+
+            // Start update loop for UI state
+            setInterval(updateInstructorUI, 500);
+        }
+
+        // Update instructor UI state
+        function updateInstructorUI() {
+            const cameraState = callFrame.localVideo();
+            const micState = callFrame.localAudio();
+            
+            // Update camera buttons
+            document.querySelectorAll('[onclick*="toggleCamera"]').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (cameraState) {
+                document.querySelector('[onclick="toggleCamera(true)"]').classList.add('active');
+            } else {
+                document.querySelector('[onclick="toggleCamera(false)"]').classList.add('active');
+            }
+
+            // Update mic buttons
+            document.querySelectorAll('[onclick*="toggleMicrophone"]').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (micState) {
+                document.querySelector('[onclick="toggleMicrophone(true)"]').classList.add('active');
+            } else {
+                document.querySelector('[onclick="toggleMicrophone(false)"]').classList.add('active');
+            }
+
+            // Update participant count
+            const count = participantMap.size + 1; // +1 for self
+            document.getElementById("participant-count").textContent = count;
+        }
+
+        // Toggle camera
+        async function toggleCamera(enable) {
+            try {
+                log("Toggling camera:", enable);
+                await callFrame.setLocalVideo(enable);
+                updateInstructorUI();
+            } catch (err) {
+                log("Error toggling camera", err);
+                alert("Failed to toggle camera: " + err.message);
+            }
+        }
+
+        // Toggle microphone
+        async function toggleMicrophone(enable) {
+            try {
+                log("Toggling microphone:", enable);
+                await callFrame.setLocalAudio(enable);
+                updateInstructorUI();
+            } catch (err) {
+                log("Error toggling microphone", err);
+                alert("Failed to toggle microphone: " + err.message);
+            }
+        }
+
+        // Toggle screen share
+        async function toggleScreenShare() {
+            try {
+                const btn = document.getElementById("screenshare-btn");
+                const isSharing = btn.textContent === "STOP";
+
+                if (isSharing) {
+                    log("Stopping screen share");
+                    await callFrame.stopScreenShare();
+                    btn.textContent = "START";
+                } else {
+                    log("Starting screen share");
+                    await callFrame.startScreenShare();
+                    btn.textContent = "STOP";
+                }
+            } catch (err) {
+                log("Error toggling screen share", err);
+                alert("Failed to toggle screen share: " + err.message);
+            }
+        }
+
+        // Update participant list
+        function updateParticipantList() {
+            const participants = Array.from(participantMap.values());
+            log("Updated participant list", participants.map(p => p.user_name));
+        }
+
+        // Update tablet feed data
+        function updateTabletFeedData(participant) {
+            const placeholder = document.getElementById("tablet-placeholder");
+            const dataContainer = document.getElementById("tablet-data");
+
+            if (!dataContainer) return;
+
+            // Show data container, hide placeholder
+            placeholder.style.display = "none";
+            dataContainer.style.display = "grid";
+
+            // Example: Parse data from participant metadata if available
+            dataContainer.innerHTML = `
+                <div class="data-card">
+                    <div class="data-card-label">Participant</div>
+                    <div class="data-card-value">${participant.user_name}</div>
+                </div>
+                <div class="data-card">
+                    <div class="data-card-label">Video</div>
+                    <div class="data-card-value">${participant.tracks?.video?.state || 'off'}</div>
+                </div>
+                <div class="data-card">
+                    <div class="data-card-label">Screen</div>
+                    <div class="data-card-value">${participant.screen_share_state || 'off'}</div>
+                </div>
+            `;
+        }
+
+        // Render Camera Mode (Mac Mini)
+        function renderCameraMode() {
+            document.getElementById("app").innerHTML = `
+                <div class="status-section">
+                    <h3>🎥 Training Location Camera</h3>
+                    <div class="status-item">
+                        <span class="status-label">Status</span>
+                        <span class="status-value">
+                            <span class="status-badge connected">✓ Active</span>
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Location</span>
+                        <span class="status-value">${currentLocation}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Camera Feed</span>
+                        <span class="status-value">Broadcasting to room</span>
+                    </div>
+                </div>
+                <div class="room-info">
+                    <strong>This Mac Mini has automatically joined the training room.</strong><br>
+                    Training location camera feed is now being shared with the instructor and recording.
+                </div>
+            `;
+
+            log("Camera mode initialized - broadcasting training location feed");
+        }
+
+        // Render Tablet Mode
+        function renderTabletMode() {
+            document.getElementById("app").innerHTML = `
+                <div class="status-section">
+                    <h3>📱 Tablet Screen Share</h3>
+                    <div class="status-item">
+                        <span class="status-label">Status</span>
+                        <span class="status-value">
+                            <span class="status-badge connected">✓ Active</span>
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Location</span>
+                        <span class="status-value">${currentLocation}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Screen Share</span>
+                        <span class="status-value">Broadcasting to room</span>
+                    </div>
+                </div>
+                <div class="room-info">
+                    <strong>Your tablet screen is being shared with the instructor.</strong><br>
+                    The CPR training app data is now visible to the instructor in real-time.<br>
+                    Your performance is being recorded.
+                </div>
+            `;
+
+            log("Tablet mode initialized - screenshare active");
+        }
+
+        // Update room status
+        async function updateRoomStatus() {
+            log("Room status updated");
+        }
+
+        // Start application
+        window.addEventListener("DOMContentLoaded", initialize);
+    </script>
+</body>
+</html>
