@@ -1,0 +1,22 @@
+
+  "locations": {
+    "MAC-MINI-1": {
+      "location": "trainingcenter1",
+      "room": "resq-training-center-1",
+      "roomUrl": "https://resq.daily.co/resq-training-center-1",
+      "displayName": "Training Center 1"
+    },
+    "MACMINI-TRAININGCENTER-2": {
+      "location": "trainingcenter2",
+      "room": "resq-training-center-2",
+      "roomUrl": "https://resq.daily.co/resq-training-center-2",
+      "displayName": "Training Center 2"
+    },
+    "MACMINI-TRAININGCENTER-3": {
+      "location": "trainingcenter3",
+      "room": "resq-training-center-3",
+      "roomUrl": "https://resq.daily.co/resq-training-center-3",
+      "displayName": "Training Center 3"
+    }
+  }
+}
