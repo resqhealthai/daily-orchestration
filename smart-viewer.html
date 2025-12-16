@@ -6,14 +6,19 @@
     <title>ResQ Health Training System</title>
     <script src="https://daily-cdn.daily.co/daily-js.js"></script>
     <style>
-        body {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #000;
             color: #fff;
         }
-        .status {
+        
+        #status {
             position: fixed;
             top: 0;
             left: 0;
@@ -22,35 +27,56 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            text-align: center;
             background: #000;
             z-index: 9999;
         }
+        
         .status-content {
+            text-align: center;
             padding: 20px;
         }
-        .status h1 {
-            margin: 0 0 10px 0;
-            font-size: 24px;
+        
+        .status-content h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
         }
-        .status p {
-            margin: 10px 0;
-            font-size: 16px;
+        
+        .status-content p {
+            font-size: 18px;
             opacity: 0.8;
+            margin: 10px 0;
         }
+        
         .error {
             color: #ff6b6b;
         }
+        
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid #fff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
         #daily-frame {
             width: 100%;
-            height: 100%;
+            height: 100vh;
         }
     </style>
 </head>
 <body>
-    <div id="status" class="status">
+    <div id="status">
         <div class="status-content">
             <h1>Connecting...</h1>
+            <div class="spinner"></div>
             <p>Joining training room</p>
         </div>
     </div>
@@ -61,76 +87,78 @@
                 // Get roomUrl from URL parameters
                 const params = new URLSearchParams(window.location.search);
                 const roomUrl = params.get('roomUrl');
-                const userName = params.get('userName') || 'Location-Camera';
-                const camera = params.get('camera') !== 'false';
-                const mic = params.get('mic') === 'true';
-
-                console.log('Parameters:', { roomUrl, userName, camera, mic });
-
+                
+                console.log('Smart Viewer Parameters:', { roomUrl });
+                
                 if (!roomUrl) {
                     showError('Error: No room URL provided');
                     return;
                 }
-
-                // Create Daily call frame
-                const callFrame = window.DailyIframe.createCallObject({
+                
+                // Create Daily call frame with Daily Prebuilt UI
+                const callFrame = window.DailyIframe.createFrame({
+                    iframeStyle: {
+                        position: 'fixed',
+                        top: '0',
+                        left: '0',
+                        width: '100%',
+                        height: '100%',
+                        border: 'none'
+                    },
                     showLeaveButton: false,
                     showFullscreenButton: false,
-                    showParticipantsButton: false,
+                    showParticipantsButton: true,
                     showSettingsButton: false,
-                    showRecordingIndicator: false,
+                    showRecordingIndicator: false
                 });
-
-                // Join the room
+                
+                // Join the room with auto-join parameters
                 console.log('Joining room:', roomUrl);
                 
                 await callFrame.join({
                     url: roomUrl,
-                    userName: userName,
-                    camera: camera,
-                    microphone: mic
+                    userName: 'Location-Camera',
+                    startAudioOff: true,
+                    startVideoOff: false
                 });
-
+                
                 console.log('Successfully joined room');
                 
-                // Hide status, show call
+                // Hide status and show call frame
                 document.getElementById('status').style.display = 'none';
                 
-                // Append call frame to body
-                callFrame.mount(document.body);
-                
-                // Wait a bit then go fullscreen if possible
+                // Attempt fullscreen after a short delay
                 setTimeout(() => {
                     try {
-                        document.documentElement.requestFullscreen().catch(() => {
-                            console.log('Fullscreen request denied');
+                        document.documentElement.requestFullscreen().catch(err => {
+                            console.log('Fullscreen request denied:', err);
                         });
                     } catch (err) {
                         console.log('Fullscreen not available');
                     }
-                }, 2000);
-
+                }, 1000);
+                
             } catch (err) {
                 console.error('Error:', err);
-                showError('Error joining room: ' + err.message);
+                showError('Error joining room:<br>' + err.message);
             }
         }
-
+        
         function showError(message) {
             const status = document.getElementById('status');
             status.innerHTML = `
                 <div class="status-content">
-                    <h1 class="error">Error</h1>
+                    <h1 class="error">Connection Error</h1>
                     <p class="error">${message}</p>
+                    <p style="margin-top: 30px; opacity: 0.6; font-size: 14px;">Check the console for more details</p>
                 </div>
             `;
         }
-
-        // Start when page loads
-        window.addEventListener('load', initialize);
         
-        // Also try immediately in case load event already fired
-        if (document.readyState === 'complete') {
+        // Start when page loads
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initialize);
+        } else {
             initialize();
         }
     </script>
