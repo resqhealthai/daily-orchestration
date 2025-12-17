@@ -6,8 +6,37 @@
     <title>ResQ Smart Viewer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        body { margin: 0; padding: 0; background: black; overflow: hidden; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1;}
+        body { 
+            margin: 0; padding: 0; 
+            overflow: hidden; 
+            height: 100vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            
+            /* --- CUSTOM BACKGROUND --- */
+            /* This shows when the instructor camera/screen is OFF */
+            background-color: #121212;
+            background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
+            background-size: cover; 
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            position: absolute; 
+            top: 0; left: 0; 
+            z-index: 1; 
+            background: transparent;
+            transition: opacity 0.3s ease; /* Smooth fade */
+        }
+
+        /* Helper class to hide video when stream is gone */
+        .hidden { opacity: 0; }
+
         #status { position: absolute; top: 10px; left: 10px; color: yellow; font-family: monospace; z-index: 100; pointer-events: none; background: rgba(0,0,0,0.5); padding: 5px; font-size: 18px;}
         #log { position: absolute; bottom: 10px; left: 10px; color: lime; font-family: monospace; z-index: 100; pointer-events: none; font-size: 14px; max-height: 40%; overflow: hidden; white-space: pre-wrap; width: 90%; background: rgba(0,0,0,0.7); padding: 10px;}
     </style>
@@ -15,17 +44,18 @@
 <body>
     <div id="status">Initializing...</div>
     <div id="log">Logs will appear here...</div>
-    <video id="videoEl" autoplay playsinline></video>
+    
+    <!-- Video starts hidden so background shows -->
+    <video id="videoEl" class="hidden" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
     <script>
-        // --- LOGGING SYSTEM ---
+        // --- LOGGING ---
         const logEl = document.getElementById('log');
         const statusEl = document.getElementById('status');
         
         const log = (msg) => {
             console.log(`[SmartViewer] ${msg}`);
-            // Keep last 10 lines
             const lines = logEl.innerText.split('\n');
             if (lines.length > 10) lines.shift(); 
             logEl.innerText = lines.join('\n') + `\n> ${msg}`;
@@ -38,7 +68,7 @@
         const MODE = params.get('mode') || 'face';
 
         if (!ROOM_URL) {
-            setStatus("CRITICAL ERROR: No URL");
+            setStatus("CRITICAL: No URL");
             throw new Error("Missing Room URL");
         }
 
@@ -46,7 +76,7 @@
         const isPassiveMode = (MODE === 'screen');
         const call = window.DailyIframe.createCallObject({
             userName: `MacMini-${MODE}`,
-            subscribeToTracksAutomatically: false, // MANUAL SUBSCRIPTION
+            subscribeToTracksAutomatically: false, 
             videoSource: !isPassiveMode, 
             audioSource: !isPassiveMode,
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
@@ -55,32 +85,24 @@
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
-        // 3. LOGIC: WHO DO WE SHOW?
+        // 3. LOGIC
         const checkParticipant = (p) => {
-            if (p.local) return { ignore: true, reason: "Self" };
-            
-            // IGNORE KIOSKS (Mac Minis / Tablets)
+            if (p.local) return { ignore: true };
             const name = (p.user_name || "Guest").toLowerCase();
-            if (name.includes("macmini")) return { ignore: true, reason: "MacMini Peer" };
-            if (name.includes("tablet")) return { ignore: true, reason: "Tablet" };
-            if (name.includes("android")) return { ignore: true, reason: "Android" };
-            
-            // SHOW EVERYONE ELSE (The Instructor)
+            if (name.includes("macmini")) return { ignore: true };
+            if (name.includes("tablet")) return { ignore: true };
+            if (name.includes("android")) return { ignore: true };
             return { ignore: false, name: p.user_name || "Guest" };
         };
 
-        // 4. SUBSCRIPTION HANDLER
+        // 4. SUBSCRIPTION
         const handleNewParticipant = (p) => {
             const check = checkParticipant(p);
-            if (check.ignore) {
-                // log(`Ignored: ${check.reason}`);
-                return;
-            }
+            if (check.ignore) return;
 
-            log(`Accepted User: ${check.name} (${p.session_id})`);
+            log(`Accepted User: ${check.name}`);
             setStatus(`Instructor Found: ${check.name}`);
 
-            // Subscribe to everything appropriate for this mode
             let subs = { audio: false, video: false, screenVideo: false };
             if (MODE === 'face') {
                 subs = { audio: true, video: true, screenVideo: false };
@@ -88,34 +110,23 @@
                 subs = { audio: false, video: false, screenVideo: true };
             }
 
-            log(`Requesting tracks... [${MODE}]`);
             call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
         };
 
-        // 5. RENDERER (The Display Logic)
+        // 5. RENDERER
         const handleTrack = (evt) => {
             const track = evt.track;
             const p = evt.participant;
             if (!track || !p) return;
-
-            const check = checkParticipant(p);
-            if (check.ignore) return;
+            if (checkParticipant(p).ignore) return;
 
             // MODE FILTER
-            const isScreenShare = p.screen; // Daily flag for screen share
+            const isScreenShare = p.screen; 
             
             if (MODE === 'face') {
-                // If Face Mode: We want Video. We HATE Screen Share.
-                if (track.kind === 'video' && isScreenShare) {
-                    log("Blocked Screen Share on Face Monitor");
-                    return;
-                }
+                if (track.kind === 'video' && isScreenShare) return;
             } else if (MODE === 'screen') {
-                // If Screen Mode: We want Screen Share. We HATE Camera.
-                if (track.kind === 'video' && !isScreenShare) {
-                    // log("Blocked Face Camera on Screen Monitor");
-                    return;
-                }
+                if (track.kind === 'video' && !isScreenShare) return;
             }
 
             log(`Playing ${track.kind} (${isScreenShare ? 'Screen' : 'Face'})`);
@@ -126,10 +137,14 @@
             if (targetEl.srcObject?.id !== track.id) {
                 targetEl.srcObject = new MediaStream([track]);
                 
-                // RETRY LOOP (Fixes Safari Stall)
+                // Show Video Element (Hide Background)
+                if (track.kind === 'video') {
+                    videoEl.classList.remove('hidden');
+                }
+
                 const forcePlay = () => {
                     targetEl.play().catch(e => {
-                        log(`Autoplay Retry... (${e.message})`);
+                        log(`Autoplay Retry...`);
                         setTimeout(forcePlay, 1000);
                     });
                 };
@@ -137,10 +152,28 @@
             }
         };
 
-        // 6. EVENTS
+        // 6. TRACK STOP (Show Background)
+        const handleTrackStopped = (evt) => {
+            const track = evt.track;
+            if (!track) return;
+            
+            if (track.kind === 'video') {
+                log("Video Stopped - Showing Graphic");
+                
+                // Check if this was the active track
+                if (videoEl.srcObject && videoEl.srcObject.getTracks().some(t => t.id === track.id)) {
+                    videoEl.srcObject = null;
+                    videoEl.classList.add('hidden'); // Fade out video, reveal background
+                    setStatus("Instructor Camera Off");
+                }
+            }
+        };
+
+        // 7. EVENTS
         call.on('participant-joined', (evt) => handleNewParticipant(evt.participant));
         call.on('participant-updated', (evt) => handleNewParticipant(evt.participant));
         call.on('track-started', handleTrack);
+        call.on('track-stopped', handleTrackStopped); 
 
         call.on('joined-meeting', (evt) => {
             log(`Joined Room. Scanning...`);
@@ -160,7 +193,7 @@
             log(`API Error: ${evt.errorMsg}`);
         });
 
-        // 7. GO
+        // 8. GO
         log("Connecting...");
         call.join({ url: ROOM_URL });
 
