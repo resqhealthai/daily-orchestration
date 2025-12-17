@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <div id="status">Initializing...</div>
+    <div id="status">Waiting for Instructor...</div>
     <video id="videoEl" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
@@ -25,16 +25,17 @@
 
         // 1. Get Params
         const params = new URLSearchParams(window.location.search);
-        const ROOM_URL = params.get('url'); // e.g. https://your-domain.daily.co/room-name
+        
+        // Supports 'roomUrl' (AppleScript) or 'url' (Standard)
+        const ROOM_URL = params.get('roomUrl') || params.get('url'); 
         const MODE = params.get('mode') || 'face'; // 'face' or 'screen'
 
         if (!ROOM_URL) {
-            log("Error: No 'url' parameter provided.");
-            throw new Error("Missing URL");
+            log("Error: No 'roomUrl' parameter provided in URL.");
+            throw new Error("Missing Room URL");
         }
 
-        // 2. Configure Call Object with Manual Subscriptions
-        // This prevents the "bandwidth fight" and allows us to pick exactly what we want.
+        // 2. Configure Call Object
         const call = window.DailyIframe.createCallObject({
             subscribeToTracksAutomatically: false, 
             dailyConfig: {
@@ -46,76 +47,70 @@
         const audioEl = document.getElementById('audioEl');
 
         // 3. Helper: Subscription Logic
-        // Decides what this specific monitor wants to see based on ?mode= parameter
         const updateSubscriptions = (participant) => {
-            if (participant.local) return; // Don't subscribe to ourselves
+            if (participant.local) return; 
 
             let subs = { audio: false, video: false, screenVideo: false };
 
             if (MODE === 'face') {
-                // Monitor 1: Wants Instructor Camera + Audio
-                // We ignore screenVideo so it never takes over
+                // Monitor 1: Instructor Camera + Audio
                 subs = { audio: true, video: true, screenVideo: false };
             } else if (MODE === 'screen') {
-                // Monitor 2: Wants Screen Share ONLY
-                // We disable audio here to prevent Echo (since Monitor 1 is playing audio)
+                // Monitor 2: Screen Share ONLY
                 subs = { audio: false, video: false, screenVideo: true };
             }
 
-            log(`Updating subs for ${participant.user_name || participant.session_id} [${MODE}]: ${JSON.stringify(subs)}`);
+            log(`Subscribing to ${participant.user_name} [${MODE}]`);
             
             call.updateParticipant(participant.session_id, {
                 setSubscribedTracks: subs
             });
         };
 
-        // 4. Helper: Track Renderer (The Daily Bot's recommended fix)
+        // 4. Helper: Track Renderer
         const handleTrack = (evt) => {
             const track = evt.track;
             if (!track) return;
             
-            // Filter: Only play what we are supposed to show
-            if (MODE === 'face' && track.kind === 'video' && evt.participant.screen) return; // Double safety
+            // --- FIX: IGNORE LOCAL VIDEO ---
+            // This prevents the Mac Mini from showing its own camera
+            if (evt.participant.local) return;
+            // -------------------------------
+
+            // Filter logic
+            if (MODE === 'face' && track.kind === 'video' && evt.participant.screen) return; 
             if (MODE === 'screen' && track.kind === 'video' && !evt.participant.screen) return; 
 
             const targetEl = track.kind === 'video' ? videoEl : audioEl;
 
-            // Prevent flicker: Check if we are already playing this track
+            // Prevent flicker if already playing
             const currentTracks = targetEl.srcObject?.getTracks() || [];
             if (currentTracks.some(t => t.id === track.id)) return;
 
-            log(`Rendering ${track.kind} track from ${evt.participant.user_name}`);
+            log(`Rendering ${track.kind} from ${evt.participant.user_name}`);
             
-            // Create new stream
             const newStream = new MediaStream([track]);
             targetEl.srcObject = newStream;
 
-            // Robust Play Logic (Fixes Safari "Passive" issues)
             targetEl.onloadedmetadata = () => {
-                targetEl.play().catch(e => {
-                    log(`Autoplay failed: ${e.message} - Click required?`);
-                });
+                targetEl.play().catch(e => log(`Autoplay failed: ${e.message}`));
             };
         };
 
         // 5. Event Listeners
         call.on('participant-joined', (evt) => {
-            log(`Participant joined: ${evt.participant.user_name}`);
             updateSubscriptions(evt.participant);
         });
 
         call.on('participant-updated', (evt) => {
-            // Re-check subscriptions if a participant adds a track (e.g. starts screen share)
-            // This ensures if the instructor shares screen LATER, we catch it.
             updateSubscriptions(evt.participant);
         });
 
         call.on('track-started', handleTrack);
 
         call.on('joined-meeting', (evt) => {
-            log(`Joined ${MODE} mode. Waiting for tracks...`);
+            log(`Joined ${MODE} mode. Waiting for Instructor stream...`);
             
-            // Check existing participants (in case we joined late)
             const participants = call.participants();
             for (const id in participants) {
                 updateSubscriptions(participants[id]);
@@ -127,7 +122,6 @@
         });
 
         // 6. Join Room
-        log(`Joining... Mode: ${MODE}`);
         call.join({ url: ROOM_URL });
 
     </script>
