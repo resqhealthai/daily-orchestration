@@ -25,22 +25,21 @@
 
         // 1. Get Params
         const params = new URLSearchParams(window.location.search);
-        
-        // Supports 'roomUrl' (AppleScript) or 'url' (Standard)
         const ROOM_URL = params.get('roomUrl') || params.get('url'); 
-        const MODE = params.get('mode') || 'face'; // 'face' or 'screen'
+        const MODE = params.get('mode') || 'face';
 
         if (!ROOM_URL) {
-            log("Error: No 'roomUrl' parameter provided in URL.");
+            log("Error: No 'roomUrl' parameter provided.");
             throw new Error("Missing Room URL");
         }
 
+        // --- STATE MANAGEMENT ---
+        // We will store the instructor's ID to ensure we only render their tracks.
+        let instructorSessionId = null;
+
         // 2. Configure Call Object
         const call = window.DailyIframe.createCallObject({
-            subscribeToTracksAutomatically: false, 
-            dailyConfig: {
-                experimentalChromeVideoMuteLightOff: true
-            }
+            subscribeToTracksAutomatically: false,
         });
 
         const videoEl = document.getElementById('videoEl');
@@ -48,46 +47,48 @@
 
         // 3. Helper: Subscription Logic
         const updateSubscriptions = (participant) => {
-            if (participant.local) return; 
+            if (participant.local) return;
+
+            // This is our instructor. Store their ID and subscribe.
+            instructorSessionId = participant.session_id;
+            log(`Found instructor: ${participant.user_name || instructorSessionId}`);
 
             let subs = { audio: false, video: false, screenVideo: false };
 
             if (MODE === 'face') {
-                // Monitor 1: Instructor Camera + Audio
                 subs = { audio: true, video: true, screenVideo: false };
             } else if (MODE === 'screen') {
-                // Monitor 2: Screen Share ONLY
                 subs = { audio: false, video: false, screenVideo: true };
             }
-
-            log(`Subscribing to ${participant.user_name} [${MODE}]`);
             
-            call.updateParticipant(participant.session_id, {
-                setSubscribedTracks: subs
-            });
+            call.updateParticipant(instructorSessionId, { setSubscribedTracks: subs });
         };
 
-        // 4. Helper: Track Renderer
+        // 4. Helper: Track Renderer (Now with Strict ID Check)
         const handleTrack = (evt) => {
             const track = evt.track;
-            if (!track) return;
-            
-            // --- FIX: IGNORE LOCAL VIDEO ---
-            // This prevents the Mac Mini from showing its own camera
-            if (evt.participant.local) return;
-            // -------------------------------
+            const participant = evt.participant;
 
-            // Filter logic
-            if (MODE === 'face' && track.kind === 'video' && evt.participant.screen) return; 
-            if (MODE === 'screen' && track.kind === 'video' && !evt.participant.screen) return; 
+            if (!track || !participant) return;
+
+            // --- THE FIX ---
+            // Only render tracks that belong to our designated instructor.
+            // This explicitly blocks the local "self-view" track.
+            if (participant.session_id !== instructorSessionId) {
+                log(`Ignoring track from non-instructor (${participant.session_id})`);
+                return;
+            }
+            // ---------------
+
+            if (MODE === 'face' && track.kind === 'video' && participant.screen) return; 
+            if (MODE === 'screen' && track.kind === 'video' && !participant.screen) return; 
 
             const targetEl = track.kind === 'video' ? videoEl : audioEl;
 
-            // Prevent flicker if already playing
             const currentTracks = targetEl.srcObject?.getTracks() || [];
             if (currentTracks.some(t => t.id === track.id)) return;
 
-            log(`Rendering ${track.kind} from ${evt.participant.user_name}`);
+            log(`Rendering ${track.kind} from ${participant.user_name || participant.session_id}`);
             
             const newStream = new MediaStream([track]);
             targetEl.srcObject = newStream;
@@ -99,21 +100,27 @@
 
         // 5. Event Listeners
         call.on('participant-joined', (evt) => {
+            // A new participant could be the instructor.
             updateSubscriptions(evt.participant);
         });
 
         call.on('participant-updated', (evt) => {
+            // Re-run if they start sharing screen later.
             updateSubscriptions(evt.participant);
         });
 
         call.on('track-started', handleTrack);
 
         call.on('joined-meeting', (evt) => {
-            log(`Joined ${MODE} mode. Waiting for Instructor stream...`);
+            log(`Joined ${MODE} mode. Searching for instructor...`);
             
+            // Check for existing participants who are not us.
             const participants = call.participants();
             for (const id in participants) {
-                updateSubscriptions(participants[id]);
+                if (!participants[id].local) {
+                    updateSubscriptions(participants[id]);
+                    break; // Assume the first remote participant is the instructor
+                }
             }
         });
 
@@ -123,7 +130,6 @@
 
         // 6. Join Room
         call.join({ url: ROOM_URL });
-
     </script>
 </body>
 </html>
