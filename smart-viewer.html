@@ -4,8 +4,15 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
+        /* FORCE FULL SCREEN LAYOUT */
+        html, body { 
+            margin: 0; 
+            padding: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: #000; 
+            overflow: hidden; 
+        }
         
         /* Debug Overlay */
         #debug {
@@ -20,16 +27,14 @@
 </head>
 <body>
     <div id="debug">Loading...</div>
-    <div id="error-msg" class="error" style="display:none;"></div>
     
     <script>
-        // Global reference
         let callFrame = null;
         let loopCount = 0;
 
         function log(msg) {
             const d = document.getElementById('debug');
-            d.innerHTML = msg;
+            if(d) d.innerText = msg;
         }
 
         async function init() {
@@ -39,15 +44,23 @@
 
             if (!roomUrl) return;
 
-            // 1. CREATE FRAME
+            // 1. CREATE FRAME WITH EXPLICIT FULLSCREEN STYLING
             callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 1 }
+                showUserName: false,  // Hide names
+                iframeStyle: {
+                    position: 'fixed',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '100%',
+                    border: '0',
+                    zIndex: '1'
+                }
             });
 
-            // 2. JOIN (With Active Speaker Mode ON)
-            // This forces the video to fill the screen automatically!
+            // 2. JOIN
             try {
                 await callFrame.join({ 
                     url: roomUrl,
@@ -55,14 +68,20 @@
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: true // <--- FIXES MINIATURE VIEW
+                    
+                    // FORCE LAYOUT: Active Speaker + Hide Bottom Bar
+                    activeSpeakerMode: true,
+                    layoutConfig: {
+                        mode: "active-speaker",
+                        showParticipantsBar: false // <--- Important: Removes the filmstrip
+                    }
                 });
             } catch(e) {
                 console.error(e);
             }
         }
 
-        // 3. LOGIC LOOP (Starts immediately)
+        // 3. LOGIC LOOP
         setInterval(() => {
             loopCount++;
             if (!callFrame) return;
@@ -72,16 +91,14 @@
             const pList = Object.values(participants);
             const remote = pList.filter(p => !p.local);
 
-            // Update Debug Text
             let status = `Loop: ${loopCount}\nMode: ${mode}\nRemote Users: ${remote.length}`;
 
-            // Apply Filters
             remote.forEach(p => {
                 status += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
                 
+                // TRACK FILTERING
                 if (mode === 'face') {
                     // FACE MODE: Subscribe to Video, BLOCK Screen
-                    // Active Speaker mode will then show the Camera because it's the only video available!
                     callFrame.updateParticipant(p.session_id, {
                         setSubscribedTracks: { audio: true, video: true, screenVideo: false }
                     });
@@ -93,10 +110,8 @@
                     });
                 }
             });
-
             log(status);
-
-        }, 1000); // Run every second
+        }, 1000);
 
         window.addEventListener('load', init);
     </script>
