@@ -6,47 +6,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        #call-frame { width: 100vw; height: 100vh; border: none; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
         h1 { font-size: 24px; margin-bottom: 10px; }
         p { font-size: 16px; color: #ccc; }
     </style>
-    <!-- Load Daily.co SDK -->
-    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
+    
+    <!-- CRITICAL FIX: Use the Official Daily.co Script -->
+    <script crossorigin src="https://api.daily.co/daily.js"></script>
+    
 </head>
 <body>
     <div id="error-msg" class="error" style="display:none;"></div>
     
     <script>
-        // === ERROR DISPLAY HELPER ===
         function showError(title, detail) {
             const el = document.getElementById('error-msg');
             el.style.display = 'block';
             el.innerHTML = `<h1>${title}</h1><p>${detail || ''}</p>`;
-            console.error(title, detail);
         }
 
-        // === MAIN INIT FUNCTION ===
         async function init() {
-            // 1. Get URL Parameters
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            // 2. Validate Inputs
             if (!roomUrl) {
-                showError("Configuration Error", "No 'roomUrl' parameter provided. Check config.json.");
+                showError("Configuration Error", "No 'roomUrl' parameter provided.");
                 return;
             }
 
+            // Check if library loaded
             if (!window.DailyIframe) {
-                showError("Dependency Error", "Daily.co SDK failed to load. Check internet connection.");
+                showError("Library Error", "window.DailyIframe is undefined. Script failed to load.");
                 return;
             }
 
             try {
-                // 3. Create Daily Call Frame
-                // We create a fullscreen iframe that overlays everything
+                // Create the call frame
                 const callFrame = window.DailyIframe.createFrame(document.body, {
                     showLeaveButton: false,
                     showFullscreenButton: false,
@@ -61,58 +57,31 @@
                     }
                 });
 
-                // 4. Configure Join Options based on Mode
-                // 'face' mode = Speaker Layout (See instructor)
-                // 'screen' mode = Active Speaker/Grid (Will show screen share when active)
-                
-                // Note: Daily's "Active Speaker" layout automatically prioritizes 
-                // screen shares when they are active.
-                
-                let layoutConfig = {
-                    layoutMode: 'active-speaker',
-                    showParticipantsBar: false,
-                    showLocalVideo: false // Never show self-view
-                };
+                console.log(`Joining: ${roomUrl}`);
 
-                console.log(`Joining room: ${roomUrl} in mode: ${mode}`);
-
-                // 5. Join the Room
+                // Join room
                 await callFrame.join({ 
                     url: roomUrl,
-                    showLeaveButton: false,
-                    showFullscreenButton: false,
-                    showLocalVideo: false, // Don't show self
-                    startVideoOff: true,   // Mac Mini camera starts OFF
-                    startAudioOff: false,  // Audio starts ON
-                    userName: `Display-${mode.toUpperCase()}`
+                    showLocalVideo: false,
+                    startVideoOff: true,
+                    startAudioOff: false,
+                    userName: `Display-${mode}`
                 });
-                
-                // 6. Post-Join Customization
-                // If this is the 'screen' display, we want to ensure we see content
-                if (mode === 'screen') {
-                   // Force layout update if needed
-                   callFrame.setShowLocalVideo(false);
-                }
-
-                console.log("Join successful");
 
             } catch (e) {
                 showError("Join Failed", e.message);
             }
         }
 
-        // === STARTUP LOGIC ===
-        // Wait for window load to ensure SDK script has processed
         window.addEventListener('load', () => {
-            if (window.DailyIframe) {
-                init();
-            } else {
-                // Fallback retry if script loads slowly
-                setTimeout(() => {
-                    if (window.DailyIframe) init();
-                    else showError("Fatal Error", "Daily SDK undefined after timeout.");
-                }, 2000);
-            }
+            // Give the script a moment to initialize
+            setTimeout(() => {
+                if (window.DailyIframe) {
+                    init();
+                } else {
+                    showError("Timeout", "Daily.co script failed to load from https://api.daily.co/daily.js");
+                }
+            }, 500);
         });
     </script>
 </body>
