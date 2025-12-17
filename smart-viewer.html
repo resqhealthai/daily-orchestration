@@ -4,101 +4,135 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        body, html { width: 100%; height: 100%; background: #000; margin: 0; overflow: hidden; }
-        
+        body { margin: 0; background: #000; overflow: hidden; }
+        /* The Video Player */
+        video {
+            position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            object-fit: contain; /* Keep aspect ratio */
+        }
         #debug {
-            position: fixed; top: 10px; left: 10px; z-index: 99999;
-            color: #0f0; background: rgba(0,0,0,0.8); padding: 5px;
-            font-family: monospace; border: 1px solid #0f0;
+            position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
+            padding: 10px; font-family: monospace; border: 1px solid #0f0; z-index: 100;
         }
     </style>
-    <!-- Use UNPKG which worked for you -->
     <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
 </head>
 <body>
-    <div id="debug">Init...</div>
+    <div id="debug">Initializing...</div>
+    <video id="main-player" autoplay playsinline></video>
+    <audio id="main-audio" autoplay></audio>
 
     <script>
-        // === CSS RULES ===
-        // We inject these dynamically to force the layout
-        const cssFace = `
-            /* FACE MODE: Hide Screen Shares */
-            .daily-video-div.daily-screen-share { display: none !important; }
-            
-            /* Make Camera Full Screen */
-            .daily-video-div {
-                position: fixed !important; top: 0; left: 0;
-                width: 100vw !important; height: 100vh !important;
-                z-index: 10;
-            }
-            .daily-video-div.local { display: none !important; }
-        `;
+        // === STATE MANAGEMENT ===
+        // This mimics React state
+        let appState = {
+            callObject: null,
+            tracks: {}, // Stores available media tracks by session_id
+            mode: new URLSearchParams(window.location.search).get('mode') || 'face'
+        };
 
-        const cssScreen = `
-            /* SCREEN MODE: Prioritize Screen Share */
-            .daily-video-div.daily-screen-share { 
-                display: block !important;
-                position: fixed !important; top: 0; left: 0;
-                width: 100vw !important; height: 100vh !important;
-                z-index: 100 !important; /* On Top of Camera */
-            }
-            /* Hide Normal Camera (by pushing it behind or hiding) */
-            .daily-video-div:not(.daily-screen-share) {
-                z-index: 1; /* Behind */
-            }
-            .daily-video-div.local { display: none !important; }
-        `;
-
-        const d = document.getElementById('debug');
+        const debug = document.getElementById('debug');
         
-        setInterval(() => {
-            if(window.DailyIframe) init();
+        function log(msg) {
+            debug.innerText = `Mode: ${appState.mode}\nStatus: ${msg}`;
+        }
+
+        // 1. SDK CHECK
+        const check = setInterval(() => {
+            if(window.DailyIframe) { clearInterval(check); init(); }
         }, 500);
 
-        let hasInit = false;
-
         async function init() {
-            if(hasInit) return;
-            hasInit = true;
-            d.innerText = "SDK Loaded";
+            log("Creating Call Object...");
+            
+            // Create the "Headless" client (No UI)
+            const call = window.DailyIframe.createCallObject({
+                subscribeToTracksAutomatically: true
+            });
+            appState.callObject = call;
 
-            const params = new URLSearchParams(window.location.search);
-            const roomUrl = params.get('roomUrl');
-            const mode = params.get('mode') || 'face';
-
-            if(!roomUrl) { d.innerText = "No URL"; return; }
-
-            // Select CSS based on mode
-            const myCSS = (mode === 'face') ? cssFace : cssScreen;
-
-            // Create Frame
-            const callFrame = window.DailyIframe.createFrame(document.body, {
-                showLeaveButton: false,
-                showFullscreenButton: false,
-                iframeStyle: {
-                    position: 'fixed', width: '100%', height: '100%', border: '0'
-                },
-                cssText: myCSS // <--- Apply the filter
+            // 2. EVENT LISTENERS (Update State)
+            
+            // Track Started: Someone turned on a camera or screen
+            call.on('track-started', (e) => {
+                if(e.participant.local) return; // Ignore self
+                log(`Track Added: ${e.track.kind}`);
+                
+                // Store the track in our state
+                // e.participant.session_id + e.track.kind + e.type
+                const key = `${e.participant.session_id}-${e.type}`; 
+                appState.tracks[key] = e.track;
+                
+                render(); // Update UI
             });
 
-            d.innerText = "Joining...";
+            // Track Stopped: Someone turned off a camera or screen
+            call.on('track-stopped', (e) => {
+                const key = `${e.participant.session_id}-${e.type}`;
+                delete appState.tracks[key];
+                render();
+            });
 
-            try {
-                await callFrame.join({
-                    url: roomUrl,
-                    showLocalVideo: false,
-                    startVideoOff: true,
-                    startAudioOff: false,
-                    userName: `Display-${mode}`,
+            // 3. JOIN
+            const roomUrl = new URLSearchParams(window.location.search).get('roomUrl');
+            if(!roomUrl) { log("Error: No URL"); return; }
+            
+            log("Joining...");
+            await call.join({ url: roomUrl, startVideoOff: true });
+            log("Joined. Waiting for tracks...");
+        }
+
+        // 4. RENDER FUNCTION (The "React" Logic)
+        function render() {
+            const videoEl = document.getElementById('main-player');
+            const audioEl = document.getElementById('main-audio');
+            
+            // Find the "Best" track to show based on our mode
+            let targetVideoTrack = null;
+            let targetAudioTrack = null;
+
+            // Iterate through all available tracks
+            for (const [key, track] of Object.entries(appState.tracks)) {
+                
+                // AUDIO: Always grab the first audio track we find
+                if (track.kind === 'audio') {
+                    targetAudioTrack = track;
+                    continue;
+                }
+
+                // VIDEO: Select based on mode
+                if (track.kind === 'video') {
+                    const isScreen = key.includes('screenVideo');
                     
-                    // KEY: Use Grid mode (activeSpeaker: false)
-                    // This forces all videos to render, letting our CSS filter them.
-                    activeSpeakerMode: false,
-                    subscribeToTracksAutomatically: true
-                });
-                d.innerText = `Active (${mode})`;
-            } catch(e) {
-                d.innerText = `Error: ${e.message}`;
+                    if (appState.mode === 'face' && !isScreen) {
+                        targetVideoTrack = track; // Found a camera
+                    }
+                    else if (appState.mode === 'screen' && isScreen) {
+                        targetVideoTrack = track; // Found a screen share
+                    }
+                }
+            }
+
+            // Apply to DOM
+            if (targetVideoTrack) {
+                if (videoEl.srcObject?.id !== targetVideoTrack.id) {
+                    log(`Playing Video: ${targetVideoTrack.label}`);
+                    videoEl.srcObject = new MediaStream([targetVideoTrack]);
+                    
+                    // CRITICAL FOR SAFARI AUTOPLAY
+                    // We must promise-chain the play() call to catch errors
+                    videoEl.play().catch(e => log(`Autoplay Blocked: ${e.message}`));
+                }
+            } else {
+                log("Waiting for matching video stream...");
+            }
+            
+            if (targetAudioTrack) {
+                 if (audioEl.srcObject?.id !== targetAudioTrack.id) {
+                    audioEl.srcObject = new MediaStream([targetAudioTrack]);
+                    audioEl.play().catch(e => console.error("Audio Autoplay blocked"));
+                }
             }
         }
     </script>
