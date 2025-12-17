@@ -6,13 +6,38 @@
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
+        
+        /* Debug Overlay - Visible on top left */
+        #debug {
+            position: fixed;
+            top: 10px; left: 10px;
+            color: #0f0; /* Green text */
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            font-family: monospace;
+            font-size: 14px;
+            z-index: 10000;
+            pointer-events: none;
+            white-space: pre-wrap;
+            border: 1px solid #0f0;
+        }
     </style>
+    <!-- Official Daily SDK -->
     <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
 <body>
+    <div id="debug">Initializing...</div>
     <div id="error-msg" class="error" style="display:none;"></div>
     
     <script>
+        // === DEBUG LOGGER ===
+        function log(msg, replace = false) {
+            const d = document.getElementById('debug');
+            if (replace) d.innerHTML = msg;
+            else d.innerHTML += `<br>${msg}`;
+            console.log(msg);
+        }
+
         function showError(title, detail) {
             const el = document.getElementById('error-msg');
             el.style.display = 'block';
@@ -24,6 +49,7 @@
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
+            log(`Mode: ${mode}`);
             if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
             // 1. CREATE FRAME
@@ -33,99 +59,79 @@
                 iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
             });
 
-            console.log(`Joining ${roomUrl} in ${mode} mode...`);
-
             try {
                 // 2. JOIN
+                log(`Joining ${roomUrl}...`);
                 await callFrame.join({ 
                     url: roomUrl,
                     showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: false // Start in Grid mode
+                    activeSpeakerMode: false // Start in Grid Mode to see everyone
                 });
+                log("Joined room.");
 
-                // 3. LISTEN FOR EVENTS
-                // This is the correct way to handle layout changes
-                
-                const updateLayout = () => {
-                    const participants = callFrame.participants();
-                    
-                    // Logic: We must "pin" the participant we want to see.
-                    // Pinning forces them to fill the screen in Active Speaker mode.
-                    
-                    let targetId = null;
-
-                    for (const id in participants) {
-                        const p = participants[id];
-                        if (p.local) continue; // Skip self
-
-                        if (mode === 'face') {
-                            // Look for a user who HAS video but IS NOT a screen share
-                            if (p.video && !p.screen) {
-                                targetId = id;
-                                break; 
-                            }
-                        } else if (mode === 'screen') {
-                            // Look for a user who HAS screen sharing active
-                            if (p.screen) {
-                                targetId = id;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (targetId) {
-                        // FORCE FOCUS ON THIS ID
-                        console.log(`[${mode}] Pinning participant: ${targetId}`);
-                        
-                        // We set mode to 'active-speaker' which shows one big video
-                        callFrame.setShowNamesMode(false); // Hide names
-                        callFrame.updateParticipant(targetId, {
-                            setSubscribedTracks: { audio: true, video: true, screenVideo: true }, // Ensure we have data
-                            styles: { cam: { width: '100%', height: '100%' }, screen: { width: '100%', height: '100%' } }
-                        });
-                        
-                        // "Spotlight" them (Pin logic equivalent)
-                         // Note: daily-js doesn't have a direct 'pin' method exposed easily in 1.0 without custom layouts,
-                         // So we simulate it by setting the track priority or ensuring they are the only ones subscribed?
-                         // Actually, keeping it simple:
-                         
-                         // REVERT TO SUBSCRIPTION LOGIC (It works if we don't block everything)
-                         // We will subscribe to the target, and UNSUBSCRIBE from everyone else.
-                         
-                         for (const otherId in participants) {
-                             if (otherId !== targetId && !participants[otherId].local) {
-                                 callFrame.updateParticipant(otherId, {
-                                     setSubscribedTracks: { audio: true, video: false, screenVideo: false }
-                                 });
-                             }
-                         }
-                         
-                         // Ensure target is fully subscribed
-                         callFrame.updateParticipant(targetId, {
-                             setSubscribedTracks: { 
-                                 audio: true, 
-                                 video: (mode === 'face'), 
-                                 screenVideo: (mode === 'screen') 
-                             }
-                         });
-                    }
-                };
-
-                // Run layout logic on events
-                callFrame.on('participant-joined', updateLayout);
-                callFrame.on('participant-updated', updateLayout);
-                callFrame.on('active-speaker-change', updateLayout);
-                
-                // Run once immediately
-                setTimeout(updateLayout, 1000);
-                setTimeout(updateLayout, 3000); // Retry in case video was slow to start
+                // 3. START LOGIC LOOP (Run every 1 second)
+                setInterval(() => {
+                    updateTracks(callFrame, mode);
+                }, 1000);
 
             } catch (e) {
                 showError("Join Failed", e.message);
             }
+        }
+
+        function updateTracks(callFrame, mode) {
+            const participants = callFrame.participants();
+            const pList = Object.values(participants);
+            
+            // Debug info
+            const remoteUsers = pList.filter(p => !p.local);
+            let debugText = `Mode: ${mode}\nLocal: Connected\nRemote Users: ${remoteUsers.length}`;
+
+            // Loop through remote users (The Instructor)
+            remoteUsers.forEach(p => {
+                debugText += `\n- User: ${p.user_name} | Cam: ${p.video} | Screen: ${p.screen}`;
+                
+                // === THE LOGIC FIX ===
+                // We do NOT check "!p.screen". We apply rules to everyone.
+                
+                if (mode === 'face') {
+                    // FACE DISPLAY:
+                    // Subscribe to Camera. BLOCK Screen.
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: {
+                            audio: true,
+                            video: true,      // <--- FORCE VIDEO ON
+                            screenVideo: false // <--- FORCE SCREEN OFF
+                        },
+                        styles: {
+                            cam: { width: '100vw', height: '100vh', display: 'block' },
+                            screen: { display: 'none' } // Hide via CSS too just in case
+                        }
+                    });
+                } 
+                else if (mode === 'screen') {
+                    // SCREEN DISPLAY:
+                    // Subscribe to Screen. BLOCK Camera.
+                    // Note: We only see black if p.screen is false (no share yet)
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: {
+                            audio: true,
+                            video: false,      // <--- FORCE VIDEO OFF
+                            screenVideo: true  // <--- FORCE SCREEN ON
+                        },
+                         styles: {
+                            cam: { display: 'none' },
+                            screen: { width: '100vw', height: '100vh', display: 'block' }
+                        }
+                    });
+                }
+            });
+
+            // Update Overlay
+            log(debugText, true);
         }
 
         window.addEventListener('load', () => setTimeout(init, 500));
