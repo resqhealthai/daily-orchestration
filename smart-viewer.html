@@ -7,30 +7,30 @@
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
         
-        /* Debug Overlay - Visible on top left */
+        /* Debug Overlay */
         #debug {
             position: fixed;
             top: 10px; left: 10px;
-            color: #0f0; /* Green text */
-            background: rgba(0,0,0,0.8);
-            padding: 10px;
+            color: #0f0; /* Green */
+            background: rgba(0,0,0,0.9);
+            padding: 15px;
             font-family: monospace;
-            font-size: 14px;
+            font-size: 16px;
             z-index: 10000;
             pointer-events: none;
             white-space: pre-wrap;
-            border: 1px solid #0f0;
+            border: 2px solid #0f0;
+            max-width: 80%;
         }
     </style>
-    <!-- Official Daily SDK -->
-    <script crossorigin src="https://api.daily.co/daily.js"></script>
+    <!-- Try the UNPKG CDN if the API one was blocked -->
+    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
 </head>
 <body>
     <div id="debug">Initializing...</div>
     <div id="error-msg" class="error" style="display:none;"></div>
     
     <script>
-        // === DEBUG LOGGER ===
         function log(msg, replace = false) {
             const d = document.getElementById('debug');
             if (replace) d.innerHTML = msg;
@@ -45,22 +45,32 @@
         }
 
         async function init() {
-            const params = new URLSearchParams(window.location.search);
-            const roomUrl = params.get('roomUrl');
-            const mode = params.get('mode') || 'face';
-
-            log(`Mode: ${mode}`);
-            if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
-
-            // 1. CREATE FRAME
-            const callFrame = window.DailyIframe.createFrame(document.body, {
-                showLeaveButton: false,
-                showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
-            });
-
             try {
-                // 2. JOIN
+                const params = new URLSearchParams(window.location.search);
+                const roomUrl = params.get('roomUrl');
+                const mode = params.get('mode') || 'face';
+
+                log(`Mode: ${mode}`);
+
+                // 1. CHECK IF SDK LOADED
+                if (!window.DailyIframe) {
+                    log("❌ CRITICAL ERROR: Daily SDK is missing!");
+                    log("The script 'daily-js' failed to load from the CDN.");
+                    log("Check Mac Mini internet or Firewall.");
+                    return;
+                }
+                log("✅ SDK Loaded.");
+
+                if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
+
+                // 2. CREATE FRAME
+                const callFrame = window.DailyIframe.createFrame(document.body, {
+                    showLeaveButton: false,
+                    showFullscreenButton: false,
+                    iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
+                });
+
+                // 3. JOIN
                 log(`Joining ${roomUrl}...`);
                 await callFrame.join({ 
                     url: roomUrl,
@@ -68,70 +78,50 @@
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: false // Start in Grid Mode to see everyone
+                    activeSpeakerMode: false 
                 });
                 log("Joined room.");
 
-                // 3. START LOGIC LOOP (Run every 1 second)
+                // 4. START LOOP
                 setInterval(() => {
                     updateTracks(callFrame, mode);
                 }, 1000);
 
             } catch (e) {
-                showError("Join Failed", e.message);
+                log(`❌ CRASH: ${e.message}`);
+                showError("Script Crash", e.message);
             }
         }
 
         function updateTracks(callFrame, mode) {
-            const participants = callFrame.participants();
-            const pList = Object.values(participants);
-            
-            // Debug info
-            const remoteUsers = pList.filter(p => !p.local);
-            let debugText = `Mode: ${mode}\nLocal: Connected\nRemote Users: ${remoteUsers.length}`;
-
-            // Loop through remote users (The Instructor)
-            remoteUsers.forEach(p => {
-                debugText += `\n- User: ${p.user_name} | Cam: ${p.video} | Screen: ${p.screen}`;
+            try {
+                const participants = callFrame.participants();
+                const pList = Object.values(participants);
+                const remoteUsers = pList.filter(p => !p.local);
                 
-                // === THE LOGIC FIX ===
-                // We do NOT check "!p.screen". We apply rules to everyone.
-                
-                if (mode === 'face') {
-                    // FACE DISPLAY:
-                    // Subscribe to Camera. BLOCK Screen.
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: {
-                            audio: true,
-                            video: true,      // <--- FORCE VIDEO ON
-                            screenVideo: false // <--- FORCE SCREEN OFF
-                        },
-                        styles: {
-                            cam: { width: '100vw', height: '100vh', display: 'block' },
-                            screen: { display: 'none' } // Hide via CSS too just in case
-                        }
-                    });
-                } 
-                else if (mode === 'screen') {
-                    // SCREEN DISPLAY:
-                    // Subscribe to Screen. BLOCK Camera.
-                    // Note: We only see black if p.screen is false (no share yet)
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: {
-                            audio: true,
-                            video: false,      // <--- FORCE VIDEO OFF
-                            screenVideo: true  // <--- FORCE SCREEN ON
-                        },
-                         styles: {
-                            cam: { display: 'none' },
-                            screen: { width: '100vw', height: '100vh', display: 'block' }
-                        }
-                    });
-                }
-            });
+                let debugText = `Mode: ${mode}\nStatus: Connected\nSDK: OK\nRemote Users: ${remoteUsers.length}`;
 
-            // Update Overlay
-            log(debugText, true);
+                remoteUsers.forEach(p => {
+                    debugText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
+                    
+                    // Force Subscription Logic
+                    if (mode === 'face') {
+                        callFrame.updateParticipant(p.session_id, {
+                            setSubscribedTracks: { audio: true, video: true, screenVideo: false },
+                            styles: { cam: { width: '100vw', height: '100vh', display: 'block' }, screen: { display: 'none' } }
+                        });
+                    } else if (mode === 'screen') {
+                        callFrame.updateParticipant(p.session_id, {
+                            setSubscribedTracks: { audio: true, video: false, screenVideo: true },
+                            styles: { cam: { display: 'none' }, screen: { width: '100vw', height: '100vh', display: 'block' } }
+                        });
+                    }
+                });
+
+                log(debugText, true);
+            } catch (err) {
+                // Ignore transient errors
+            }
         }
 
         window.addEventListener('load', () => setTimeout(init, 500));
