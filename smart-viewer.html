@@ -6,6 +6,7 @@
     <title>ResQ Smart Viewer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
+        /* 1. LAYOUT & BACKGROUND */
         body { 
             margin: 0; padding: 0; 
             overflow: hidden; 
@@ -13,16 +14,17 @@
             display: flex; 
             justify-content: center; 
             align-items: center; 
-            
-            /* --- CUSTOM BACKGROUND --- */
-            /* This shows when the instructor camera/screen is OFF */
             background-color: #121212;
+            
+            /* CUSTOM GRAPHIC URL */
             background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
+            
             background-size: cover; 
             background-position: center;
             background-repeat: no-repeat;
         }
 
+        /* 2. VIDEO ELEMENT */
         video { 
             width: 100%; 
             height: 100%; 
@@ -31,46 +33,27 @@
             top: 0; left: 0; 
             z-index: 1; 
             background: transparent;
-            transition: opacity 0.3s ease; /* Smooth fade */
+            transition: opacity 0.5s ease; /* Smooth fade in/out */
         }
 
-        /* Helper class to hide video when stream is gone */
+        /* Class to hide video (reveal background) */
         .hidden { opacity: 0; }
-
-        #status { position: absolute; top: 10px; left: 10px; color: yellow; font-family: monospace; z-index: 100; pointer-events: none; background: rgba(0,0,0,0.5); padding: 5px; font-size: 18px;}
-        #log { position: absolute; bottom: 10px; left: 10px; color: lime; font-family: monospace; z-index: 100; pointer-events: none; font-size: 14px; max-height: 40%; overflow: hidden; white-space: pre-wrap; width: 90%; background: rgba(0,0,0,0.7); padding: 10px;}
     </style>
 </head>
 <body>
-    <div id="status">Initializing...</div>
-    <div id="log">Logs will appear here...</div>
-    
     <!-- Video starts hidden so background shows -->
     <video id="videoEl" class="hidden" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
     <script>
-        // --- LOGGING ---
-        const logEl = document.getElementById('log');
-        const statusEl = document.getElementById('status');
-        
-        const log = (msg) => {
-            console.log(`[SmartViewer] ${msg}`);
-            const lines = logEl.innerText.split('\n');
-            if (lines.length > 10) lines.shift(); 
-            logEl.innerText = lines.join('\n') + `\n> ${msg}`;
-        };
-        const setStatus = (msg) => statusEl.innerText = msg;
+        const log = (msg) => console.log(`[SmartViewer] ${msg}`);
 
         // 1. PARAMS
         const params = new URLSearchParams(window.location.search);
         const ROOM_URL = params.get('roomUrl') || params.get('url'); 
         const MODE = params.get('mode') || 'face';
 
-        if (!ROOM_URL) {
-            setStatus("CRITICAL: No URL");
-            throw new Error("Missing Room URL");
-        }
+        if (!ROOM_URL) throw new Error("Missing Room URL");
 
         // 2. CONFIG
         const isPassiveMode = (MODE === 'screen');
@@ -85,7 +68,7 @@
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
-        // 3. LOGIC
+        // 3. LOGIC: IGNORE KIOSKS & TABLETS
         const checkParticipant = (p) => {
             if (p.local) return { ignore: true };
             const name = (p.user_name || "Guest").toLowerCase();
@@ -95,13 +78,12 @@
             return { ignore: false, name: p.user_name || "Guest" };
         };
 
-        // 4. SUBSCRIPTION
+        // 4. SUBSCRIPTION LOGIC
         const handleNewParticipant = (p) => {
             const check = checkParticipant(p);
             if (check.ignore) return;
 
-            log(`Accepted User: ${check.name}`);
-            setStatus(`Instructor Found: ${check.name}`);
+            log(`Accepted Instructor: ${check.name}`);
 
             let subs = { audio: false, video: false, screenVideo: false };
             if (MODE === 'face') {
@@ -113,38 +95,35 @@
             call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
         };
 
-        // 5. RENDERER
+        // 5. RENDER LOGIC
         const handleTrack = (evt) => {
             const track = evt.track;
             const p = evt.participant;
             if (!track || !p) return;
             if (checkParticipant(p).ignore) return;
 
-            // MODE FILTER
+            // Mode Check
             const isScreenShare = p.screen; 
-            
             if (MODE === 'face') {
                 if (track.kind === 'video' && isScreenShare) return;
             } else if (MODE === 'screen') {
                 if (track.kind === 'video' && !isScreenShare) return;
             }
 
-            log(`Playing ${track.kind} (${isScreenShare ? 'Screen' : 'Face'})`);
-            setStatus("Playback Active");
-
+            log(`Playing ${track.kind}`);
             const targetEl = track.kind === 'video' ? videoEl : audioEl;
             
             if (targetEl.srcObject?.id !== track.id) {
                 targetEl.srcObject = new MediaStream([track]);
                 
-                // Show Video Element (Hide Background)
+                // Show Video (Fade In)
                 if (track.kind === 'video') {
                     videoEl.classList.remove('hidden');
                 }
 
                 const forcePlay = () => {
                     targetEl.play().catch(e => {
-                        log(`Autoplay Retry...`);
+                        log("Autoplay blocked, retrying...");
                         setTimeout(forcePlay, 1000);
                     });
                 };
@@ -152,51 +131,37 @@
             }
         };
 
-        // 6. TRACK STOP (Show Background)
+        // 6. TRACK STOPPED (Show Background)
         const handleTrackStopped = (evt) => {
             const track = evt.track;
             if (!track) return;
             
             if (track.kind === 'video') {
-                log("Video Stopped - Showing Graphic");
-                
-                // Check if this was the active track
+                log("Video Stopped. Showing Background.");
+                // If this was the active track, hide the video element
                 if (videoEl.srcObject && videoEl.srcObject.getTracks().some(t => t.id === track.id)) {
                     videoEl.srcObject = null;
-                    videoEl.classList.add('hidden'); // Fade out video, reveal background
-                    setStatus("Instructor Camera Off");
+                    videoEl.classList.add('hidden'); 
                 }
             }
         };
 
-        // 7. EVENTS
+        // 7. EVENT LISTENERS
         call.on('participant-joined', (evt) => handleNewParticipant(evt.participant));
         call.on('participant-updated', (evt) => handleNewParticipant(evt.participant));
         call.on('track-started', handleTrack);
         call.on('track-stopped', handleTrackStopped); 
 
         call.on('joined-meeting', (evt) => {
-            log(`Joined Room. Scanning...`);
+            log("Joined. Scanning...");
             const participants = call.participants();
             const remotes = Object.values(participants).filter(p => !p.local);
-            
-            log(`Found ${remotes.length} remotes.`);
             if(remotes.length > 0) {
                 remotes.forEach(p => handleNewParticipant(p));
-            } else {
-                setStatus("Waiting for Instructor...");
             }
         });
 
-        call.on('error', (evt) => {
-            setStatus("Error!");
-            log(`API Error: ${evt.errorMsg}`);
-        });
-
-        // 8. GO
-        log("Connecting...");
         call.join({ url: ROOM_URL });
-
     </script>
 </body>
 </html>
