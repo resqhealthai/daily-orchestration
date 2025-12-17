@@ -6,32 +6,47 @@
     <title>ResQ Smart Viewer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        body { margin: 0; padding: 0; background: black; overflow: hidden; height: 100vh; display: flex; justify-content: center; align-items: center; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        #status { position: absolute; top: 10px; left: 10px; color: lime; font-family: monospace; z-index: 100; pointer-events: none; background: rgba(0,0,0,0.5); padding: 5px;}
+        body { margin: 0; padding: 0; background: black; overflow: hidden; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        video { width: 100%; height: 100%; object-fit: cover; position: absolute; top:0; left:0; z-index: 1;}
+        #status { position: absolute; top: 10px; left: 10px; color: yellow; font-family: monospace; z-index: 100; pointer-events: none; background: rgba(0,0,0,0.5); padding: 5px; font-size: 18px;}
+        #log { position: absolute; bottom: 10px; left: 10px; color: lime; font-family: monospace; z-index: 100; pointer-events: none; font-size: 14px; max-height: 40%; overflow: hidden; white-space: pre-wrap; width: 90%; background: rgba(0,0,0,0.7); padding: 10px;}
     </style>
 </head>
 <body>
-    <div id="status">Waiting for 'Instructor'...</div>
+    <div id="status">Initializing...</div>
+    <div id="log">Logs will appear here...</div>
     <video id="videoEl" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
     <script>
-        const setStatus = (msg) => document.getElementById('status').innerText = msg;
-        const log = (msg) => console.log(`[SmartViewer] ${msg}`);
+        // --- LOGGING SYSTEM ---
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+        
+        const log = (msg) => {
+            console.log(`[SmartViewer] ${msg}`);
+            // Keep last 10 lines
+            const lines = logEl.innerText.split('\n');
+            if (lines.length > 10) lines.shift(); 
+            logEl.innerText = lines.join('\n') + `\n> ${msg}`;
+        };
+        const setStatus = (msg) => statusEl.innerText = msg;
 
         // 1. PARAMS
         const params = new URLSearchParams(window.location.search);
         const ROOM_URL = params.get('roomUrl') || params.get('url'); 
         const MODE = params.get('mode') || 'face';
 
-        if (!ROOM_URL) throw new Error("Missing Room URL");
+        if (!ROOM_URL) {
+            setStatus("CRITICAL ERROR: No URL");
+            throw new Error("Missing Room URL");
+        }
 
         // 2. CONFIG
         const isPassiveMode = (MODE === 'screen');
         const call = window.DailyIframe.createCallObject({
-            userName: `MacMini-${MODE}`, // We name ourselves clearly
-            subscribeToTracksAutomatically: false, // Manual Control
+            userName: `MacMini-${MODE}`,
+            subscribeToTracksAutomatically: false, // MANUAL SUBSCRIPTION
             videoSource: !isPassiveMode, 
             audioSource: !isPassiveMode,
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
@@ -40,63 +55,115 @@
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
-        // 3. THE SIMPLE LOGIC: ONLY "Instructor" EXISTS
-        const isInstructor = (p) => {
-            // Check if name contains "Instructor" (case insensitive)
-            return (p.user_name || "").toLowerCase().includes("instructor");
+        // 3. LOGIC: WHO DO WE SHOW?
+        const checkParticipant = (p) => {
+            if (p.local) return { ignore: true, reason: "Self" };
+            
+            // IGNORE KIOSKS (Mac Minis / Tablets)
+            const name = (p.user_name || "Guest").toLowerCase();
+            if (name.includes("macmini")) return { ignore: true, reason: "MacMini Peer" };
+            if (name.includes("tablet")) return { ignore: true, reason: "Tablet" };
+            if (name.includes("android")) return { ignore: true, reason: "Android" };
+            
+            // SHOW EVERYONE ELSE (The Instructor)
+            return { ignore: false, name: p.user_name || "Guest" };
         };
 
-        const updateSubscriptions = (p) => {
-            if (!isInstructor(p)) return; // Ignore everyone else
+        // 4. SUBSCRIPTION HANDLER
+        const handleNewParticipant = (p) => {
+            const check = checkParticipant(p);
+            if (check.ignore) {
+                // log(`Ignored: ${check.reason}`);
+                return;
+            }
 
-            log(`Found Instructor! Subscribing...`);
-            setStatus(`Instructor Connected.`);
+            log(`Accepted User: ${check.name} (${p.session_id})`);
+            setStatus(`Instructor Found: ${check.name}`);
 
+            // Subscribe to everything appropriate for this mode
             let subs = { audio: false, video: false, screenVideo: false };
             if (MODE === 'face') {
                 subs = { audio: true, video: true, screenVideo: false };
             } else if (MODE === 'screen') {
                 subs = { audio: false, video: false, screenVideo: true };
             }
+
+            log(`Requesting tracks... [${MODE}]`);
             call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
         };
 
+        // 5. RENDERER (The Display Logic)
         const handleTrack = (evt) => {
-            const p = evt.participant;
             const track = evt.track;
+            const p = evt.participant;
+            if (!track || !p) return;
 
-            if (!p || !track) return;
-            if (!isInstructor(p)) return; // Ignore non-instructors
+            const check = checkParticipant(p);
+            if (check.ignore) return;
 
-            // Mode Check
+            // MODE FILTER
+            const isScreenShare = p.screen; // Daily flag for screen share
+            
             if (MODE === 'face') {
-                if (track.kind === 'video' && p.screen) return;
+                // If Face Mode: We want Video. We HATE Screen Share.
+                if (track.kind === 'video' && isScreenShare) {
+                    log("Blocked Screen Share on Face Monitor");
+                    return;
+                }
             } else if (MODE === 'screen') {
-                if (track.kind === 'video' && !p.screen) return;
+                // If Screen Mode: We want Screen Share. We HATE Camera.
+                if (track.kind === 'video' && !isScreenShare) {
+                    // log("Blocked Face Camera on Screen Monitor");
+                    return;
+                }
             }
 
-            const targetEl = track.kind === 'video' ? videoEl : audioEl;
-            if (targetEl.srcObject?.id === track.id) return;
+            log(`Playing ${track.kind} (${isScreenShare ? 'Screen' : 'Face'})`);
+            setStatus("Playback Active");
 
-            log(`Playing ${track.kind} track`);
-            targetEl.srcObject = new MediaStream([track]);
-            targetEl.play().catch(console.error);
+            const targetEl = track.kind === 'video' ? videoEl : audioEl;
+            
+            if (targetEl.srcObject?.id !== track.id) {
+                targetEl.srcObject = new MediaStream([track]);
+                
+                // RETRY LOOP (Fixes Safari Stall)
+                const forcePlay = () => {
+                    targetEl.play().catch(e => {
+                        log(`Autoplay Retry... (${e.message})`);
+                        setTimeout(forcePlay, 1000);
+                    });
+                };
+                forcePlay();
+            }
         };
 
-        // 4. EVENTS
-        call.on('participant-joined', (evt) => updateSubscriptions(evt.participant));
-        call.on('participant-updated', (evt) => updateSubscriptions(evt.participant));
+        // 6. EVENTS
+        call.on('participant-joined', (evt) => handleNewParticipant(evt.participant));
+        call.on('participant-updated', (evt) => handleNewParticipant(evt.participant));
         call.on('track-started', handleTrack);
 
         call.on('joined-meeting', (evt) => {
-            log("Joined. Scanning for 'Instructor'...");
+            log(`Joined Room. Scanning...`);
             const participants = call.participants();
-            for (const id in participants) {
-                updateSubscriptions(participants[id]);
+            const remotes = Object.values(participants).filter(p => !p.local);
+            
+            log(`Found ${remotes.length} remotes.`);
+            if(remotes.length > 0) {
+                remotes.forEach(p => handleNewParticipant(p));
+            } else {
+                setStatus("Waiting for Instructor...");
             }
         });
 
+        call.on('error', (evt) => {
+            setStatus("Error!");
+            log(`API Error: ${evt.errorMsg}`);
+        });
+
+        // 7. GO
+        log("Connecting...");
         call.join({ url: ROOM_URL });
+
     </script>
 </body>
 </html>
