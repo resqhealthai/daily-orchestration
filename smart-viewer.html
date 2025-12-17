@@ -6,6 +6,15 @@
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
+        /* Base style for all videos: absolute full screen */
+        .daily-video-div {
+            position: fixed !important;
+            top: 0 !important; 
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 1;
+        }
     </style>
     <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
@@ -26,65 +35,76 @@
 
             if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
-            // === CSS INJECTION STRATEGY ===
-            let customCSS = '';
-            
-            if (mode === 'face') {
-                // FACE MODE:
-                // 1. Hide Screen Shares
-                // 2. Hide Self
-                customCSS = `
-                    /* Hide Screen Share Elements */
-                    .daily-video-div.daily-screen-share { display: none !important; }
-                    .daily-video-element.daily-screen-share { display: none !important; }
-                    
-                    /* Hide Local Video (Self) */
-                    .daily-video-div.local { display: none !important; }
-                    
-                    /* Make remaining video (Instructor) fill screen */
-                    .daily-video-div { width: 100vw !important; height: 100vh !important; top: 0 !important; left: 0 !important; }
-                `;
-            } else if (mode === 'screen') {
-                // SCREEN MODE:
-                // 1. Hide Face Videos
-                // 2. Hide Self
-                customCSS = `
-                    /* Hide Normal Camera Elements */
-                    .daily-video-div:not(.daily-screen-share) { display: none !important; }
-                    
-                    /* Make Screen Share fill screen */
-                    .daily-video-div.daily-screen-share { 
-                        display: block !important; 
-                        width: 100vw !important; 
-                        height: 100vh !important; 
-                        top: 0 !important; 
-                        left: 0 !important; 
-                    }
-                `;
-            }
-
-            // CREATE FRAME
+            // 1. CREATE FRAME
             const callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 },
-                cssText: customCSS
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
             });
 
             console.log(`Joining ${roomUrl} in ${mode} mode...`);
 
             try {
+                // 2. JOIN (Force Grid/Active Speaker OFF)
                 await callFrame.join({ 
                     url: roomUrl,
                     showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: false // Use Grid mode so CSS can target individual tiles
+                    activeSpeakerMode: false // Grid Mode
                 });
+
+                // 3. START LAYOUT ENFORCER LOOP
+                // This runs every 500ms to audit the DOM and force visibility
+                setInterval(() => {
+                    enforceLayout(mode);
+                }, 500);
+
             } catch (e) {
                 showError("Join Failed", e.message);
             }
+        }
+
+        // === THE LOGIC ENGINE ===
+        function enforceLayout(mode) {
+            // Get all video containers injected by Daily
+            const videos = document.querySelectorAll('.daily-video-div');
+            
+            videos.forEach(div => {
+                // Check if this tile is a Screen Share
+                const isScreen = div.classList.contains('daily-screen-share');
+                
+                // Check if this tile is Self (Local)
+                const isLocal = div.classList.contains('local');
+
+                if (isLocal) {
+                    // ALWAYS hide self
+                    div.style.display = 'none';
+                    return;
+                }
+
+                if (mode === 'face') {
+                    // FACE MODE: 
+                    // Show Camera (Not Screen), Hide Screen
+                    if (isScreen) {
+                        div.style.display = 'none';
+                    } else {
+                        div.style.display = 'block';
+                        div.style.zIndex = '100'; // Bring to front
+                    }
+                } 
+                else if (mode === 'screen') {
+                    // SCREEN MODE:
+                    // Show Screen, Hide Camera
+                    if (isScreen) {
+                        div.style.display = 'block';
+                        div.style.zIndex = '100'; // Bring to front
+                    } else {
+                        div.style.display = 'none';
+                    }
+                }
+            });
         }
 
         window.addEventListener('load', () => setTimeout(init, 500));
