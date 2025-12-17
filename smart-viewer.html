@@ -10,38 +10,56 @@
             padding: 10px; font-family: monospace; font-size: 16px; z-index: 10000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
-    <script crossorigin src="https://api.daily.co/daily.js"></script>
+    
+    <!-- SWITCHING BACK TO UNPKG (This worked for you before) -->
+    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
+    
 </head>
 <body>
     <div id="debug">Initializing Script...</div>
     
     <script>
-        // Global State
         let callFrame = null;
         let loopCount = 0;
-        let joinStatus = "Not Started";
+        let joinStatus = "Waiting for SDK...";
+        let retryCount = 0;
 
-        // === 1. THE LOGIC LOOP (Runs Independent of Daily) ===
-        // This ensures you always see green text updating, even if Daily fails
-        setInterval(() => {
-            loopCount++;
+        // 1. SDK LOADER LOOP
+        // We check every 500ms to see if Daily has loaded
+        const sdkCheck = setInterval(() => {
+            if (window.DailyIframe) {
+                clearInterval(sdkCheck);
+                joinStatus = "SDK Loaded. Starting Init...";
+                init();
+            } else {
+                retryCount++;
+                joinStatus = `Waiting for SDK... (${retryCount})`;
+                if (retryCount > 20) {
+                    joinStatus = "CRITICAL ERROR: SDK Failed to Load (unpkg.com)";
+                }
+            }
+            // Update debug text immediately
+            updateDebug();
+        }, 500);
+
+        function updateDebug() {
             const d = document.getElementById('debug');
             if (!d) return;
-
             const mode = new URLSearchParams(window.location.search).get('mode') || 'unknown';
+            
             let statusText = `Loop: ${loopCount}\nMode: ${mode}\nStatus: ${joinStatus}`;
-
+            
             if (callFrame) {
                 try {
                     const participants = callFrame.participants();
                     const pList = Object.values(participants);
                     const remote = pList.filter(p => !p.local);
                     statusText += `\nRemote Users: ${remote.length}`;
-
-                    // Apply Logic
+                    
                     remote.forEach(p => {
                         statusText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
                         
+                        // LOGIC APPLICATION
                         if (mode === 'face') {
                             callFrame.updateParticipant(p.session_id, {
                                 setSubscribedTracks: { audio: true, video: true, screenVideo: false }
@@ -52,36 +70,26 @@
                             });
                         }
                     });
-                } catch (err) {
-                    statusText += `\nError: ${err.message}`;
-                }
-            } else {
-                statusText += "\nWaiting for callFrame...";
+                } catch (e) { statusText += `\nErr: ${e.message}`; }
             }
-
             d.innerText = statusText;
+        }
+
+        // 2. LOGIC LOOP
+        setInterval(() => {
+            loopCount++;
+            updateDebug();
         }, 1000);
 
-        // === 2. INITIALIZATION ===
+        // 3. MAIN INIT
         async function init() {
-            joinStatus = "Starting Init...";
-            
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            if (!roomUrl) {
-                joinStatus = "Error: No roomUrl";
-                return;
-            }
-
-            if (!window.DailyIframe) {
-                joinStatus = "Error: Daily SDK Missing";
-                return;
-            }
+            if (!roomUrl) { joinStatus = "Error: No roomUrl"; return; }
 
             // Create Frame
-            joinStatus = "Creating Frame...";
             callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
@@ -112,9 +120,6 @@
                 console.error(e);
             }
         }
-
-        // Wait for window load
-        window.addEventListener('load', () => setTimeout(init, 500));
     </script>
 </body>
 </html>
