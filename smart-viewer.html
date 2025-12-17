@@ -10,10 +10,7 @@
             padding: 10px; font-family: monospace; font-size: 16px; z-index: 10000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
-    
-    <!-- SWITCHING BACK TO UNPKG (This worked for you before) -->
     <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
-    
 </head>
 <body>
     <div id="debug">Initializing Script...</div>
@@ -24,8 +21,7 @@
         let joinStatus = "Waiting for SDK...";
         let retryCount = 0;
 
-        // 1. SDK LOADER LOOP
-        // We check every 500ms to see if Daily has loaded
+        // 1. SDK CHECK
         const sdkCheck = setInterval(() => {
             if (window.DailyIframe) {
                 clearInterval(sdkCheck);
@@ -34,11 +30,8 @@
             } else {
                 retryCount++;
                 joinStatus = `Waiting for SDK... (${retryCount})`;
-                if (retryCount > 20) {
-                    joinStatus = "CRITICAL ERROR: SDK Failed to Load (unpkg.com)";
-                }
+                if (retryCount > 20) joinStatus = "CRITICAL ERROR: SDK Failed to Load";
             }
-            // Update debug text immediately
             updateDebug();
         }, 500);
 
@@ -57,14 +50,17 @@
                     statusText += `\nRemote Users: ${remote.length}`;
                     
                     remote.forEach(p => {
+                        // Display status of what we see vs what they have
                         statusText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
                         
-                        // LOGIC APPLICATION
+                        // === ROUTING LOGIC ===
                         if (mode === 'face') {
+                            // FACE MODE: Force Camera ON, Screen OFF
                             callFrame.updateParticipant(p.session_id, {
                                 setSubscribedTracks: { audio: true, video: true, screenVideo: false }
                             });
                         } else if (mode === 'screen') {
+                            // SCREEN MODE: Force Screen ON, Camera OFF
                             callFrame.updateParticipant(p.session_id, {
                                 setSubscribedTracks: { audio: true, video: false, screenVideo: true }
                             });
@@ -108,6 +104,10 @@
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
+                    
+                    // CRITICAL FIX: Turn off auto-subscriptions so we can manage them manually
+                    subscribeToTracksAutomatically: false, 
+                    
                     activeSpeakerMode: true,
                     layoutConfig: {
                         mode: "active-speaker",
