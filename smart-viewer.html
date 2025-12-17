@@ -4,63 +4,95 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        /* FORCE FULL SCREEN LAYOUT */
-        html, body { 
-            margin: 0; 
-            padding: 0; 
-            width: 100%; 
-            height: 100%; 
-            background-color: #000; 
-            overflow: hidden; 
-        }
-        
-        /* Debug Overlay */
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; overflow: hidden; }
         #debug {
-            position: fixed;
-            top: 10px; left: 10px;
-            color: #0f0; background: rgba(0,0,0,0.8);
-            padding: 10px; font-family: monospace; font-size: 16px;
-            z-index: 10000; pointer-events: none; border: 1px solid #0f0;
+            position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
+            padding: 10px; font-family: monospace; font-size: 16px; z-index: 10000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
     <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
 <body>
-    <div id="debug">Loading...</div>
+    <div id="debug">Initializing Script...</div>
     
     <script>
+        // Global State
         let callFrame = null;
         let loopCount = 0;
+        let joinStatus = "Not Started";
 
-        function log(msg) {
+        // === 1. THE LOGIC LOOP (Runs Independent of Daily) ===
+        // This ensures you always see green text updating, even if Daily fails
+        setInterval(() => {
+            loopCount++;
             const d = document.getElementById('debug');
-            if(d) d.innerText = msg;
-        }
+            if (!d) return;
 
+            const mode = new URLSearchParams(window.location.search).get('mode') || 'unknown';
+            let statusText = `Loop: ${loopCount}\nMode: ${mode}\nStatus: ${joinStatus}`;
+
+            if (callFrame) {
+                try {
+                    const participants = callFrame.participants();
+                    const pList = Object.values(participants);
+                    const remote = pList.filter(p => !p.local);
+                    statusText += `\nRemote Users: ${remote.length}`;
+
+                    // Apply Logic
+                    remote.forEach(p => {
+                        statusText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
+                        
+                        if (mode === 'face') {
+                            callFrame.updateParticipant(p.session_id, {
+                                setSubscribedTracks: { audio: true, video: true, screenVideo: false }
+                            });
+                        } else if (mode === 'screen') {
+                            callFrame.updateParticipant(p.session_id, {
+                                setSubscribedTracks: { audio: true, video: false, screenVideo: true }
+                            });
+                        }
+                    });
+                } catch (err) {
+                    statusText += `\nError: ${err.message}`;
+                }
+            } else {
+                statusText += "\nWaiting for callFrame...";
+            }
+
+            d.innerText = statusText;
+        }, 1000);
+
+        // === 2. INITIALIZATION ===
         async function init() {
+            joinStatus = "Starting Init...";
+            
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            if (!roomUrl) return;
+            if (!roomUrl) {
+                joinStatus = "Error: No roomUrl";
+                return;
+            }
 
-            // 1. CREATE FRAME WITH EXPLICIT FULLSCREEN STYLING
+            if (!window.DailyIframe) {
+                joinStatus = "Error: Daily SDK Missing";
+                return;
+            }
+
+            // Create Frame
+            joinStatus = "Creating Frame...";
             callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                showUserName: false,  // Hide names
+                showUserName: false,
                 iframeStyle: {
-                    position: 'fixed',
-                    top: '0',
-                    left: '0',
-                    width: '100%',
-                    height: '100%',
-                    border: '0',
-                    zIndex: '1'
+                    position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', border: '0', zIndex: '1'
                 }
             });
 
-            // 2. JOIN
+            // Join
+            joinStatus = "Joining Room...";
             try {
                 await callFrame.join({ 
                     url: roomUrl,
@@ -68,52 +100,21 @@
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    
-                    // FORCE LAYOUT: Active Speaker + Hide Bottom Bar
                     activeSpeakerMode: true,
                     layoutConfig: {
                         mode: "active-speaker",
-                        showParticipantsBar: false // <--- Important: Removes the filmstrip
+                        showParticipantsBar: false
                     }
                 });
+                joinStatus = "Joined & Active";
             } catch(e) {
+                joinStatus = `Join Failed: ${e.message}`;
                 console.error(e);
             }
         }
 
-        // 3. LOGIC LOOP
-        setInterval(() => {
-            loopCount++;
-            if (!callFrame) return;
-
-            const mode = new URLSearchParams(window.location.search).get('mode') || 'face';
-            const participants = callFrame.participants();
-            const pList = Object.values(participants);
-            const remote = pList.filter(p => !p.local);
-
-            let status = `Loop: ${loopCount}\nMode: ${mode}\nRemote Users: ${remote.length}`;
-
-            remote.forEach(p => {
-                status += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
-                
-                // TRACK FILTERING
-                if (mode === 'face') {
-                    // FACE MODE: Subscribe to Video, BLOCK Screen
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: { audio: true, video: true, screenVideo: false }
-                    });
-                } 
-                else if (mode === 'screen') {
-                    // SCREEN MODE: Subscribe to Screen, BLOCK Camera
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: { audio: true, video: false, screenVideo: true }
-                    });
-                }
-            });
-            log(status);
-        }, 1000);
-
-        window.addEventListener('load', init);
+        // Wait for window load
+        window.addEventListener('load', () => setTimeout(init, 500));
     </script>
 </body>
 </html>
