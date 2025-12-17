@@ -11,120 +11,94 @@
         #debug {
             position: fixed;
             top: 10px; left: 10px;
-            color: #0f0; /* Green */
-            background: rgba(0,0,0,0.9);
-            padding: 15px;
-            font-family: monospace;
-            font-size: 16px;
-            z-index: 10000;
-            pointer-events: none;
-            white-space: pre-wrap;
-            border: 2px solid #0f0;
-            max-width: 80%;
+            color: #0f0; background: rgba(0,0,0,0.8);
+            padding: 10px; font-family: monospace; font-size: 16px;
+            z-index: 10000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
-    <!-- Try the UNPKG CDN if the API one was blocked -->
-    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
+    <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
 <body>
-    <div id="debug">Initializing...</div>
+    <div id="debug">Loading...</div>
     <div id="error-msg" class="error" style="display:none;"></div>
     
     <script>
-        function log(msg, replace = false) {
-            const d = document.getElementById('debug');
-            if (replace) d.innerHTML = msg;
-            else d.innerHTML += `<br>${msg}`;
-            console.log(msg);
-        }
+        // Global reference
+        let callFrame = null;
+        let loopCount = 0;
 
-        function showError(title, detail) {
-            const el = document.getElementById('error-msg');
-            el.style.display = 'block';
-            el.innerHTML = `<h1>${title}</h1><p>${detail || ''}</p>`;
+        function log(msg) {
+            const d = document.getElementById('debug');
+            d.innerHTML = msg;
         }
 
         async function init() {
+            const params = new URLSearchParams(window.location.search);
+            const roomUrl = params.get('roomUrl');
+            const mode = params.get('mode') || 'face';
+
+            if (!roomUrl) return;
+
+            // 1. CREATE FRAME
+            callFrame = window.DailyIframe.createFrame(document.body, {
+                showLeaveButton: false,
+                showFullscreenButton: false,
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 1 }
+            });
+
+            // 2. JOIN (With Active Speaker Mode ON)
+            // This forces the video to fill the screen automatically!
             try {
-                const params = new URLSearchParams(window.location.search);
-                const roomUrl = params.get('roomUrl');
-                const mode = params.get('mode') || 'face';
-
-                log(`Mode: ${mode}`);
-
-                // 1. CHECK IF SDK LOADED
-                if (!window.DailyIframe) {
-                    log("❌ CRITICAL ERROR: Daily SDK is missing!");
-                    log("The script 'daily-js' failed to load from the CDN.");
-                    log("Check Mac Mini internet or Firewall.");
-                    return;
-                }
-                log("✅ SDK Loaded.");
-
-                if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
-
-                // 2. CREATE FRAME
-                const callFrame = window.DailyIframe.createFrame(document.body, {
-                    showLeaveButton: false,
-                    showFullscreenButton: false,
-                    iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
-                });
-
-                // 3. JOIN
-                log(`Joining ${roomUrl}...`);
                 await callFrame.join({ 
                     url: roomUrl,
                     showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: false 
+                    activeSpeakerMode: true // <--- FIXES MINIATURE VIEW
                 });
-                log("Joined room.");
-
-                // 4. START LOOP
-                setInterval(() => {
-                    updateTracks(callFrame, mode);
-                }, 1000);
-
-            } catch (e) {
-                log(`❌ CRASH: ${e.message}`);
-                showError("Script Crash", e.message);
+            } catch(e) {
+                console.error(e);
             }
         }
 
-        function updateTracks(callFrame, mode) {
-            try {
-                const participants = callFrame.participants();
-                const pList = Object.values(participants);
-                const remoteUsers = pList.filter(p => !p.local);
+        // 3. LOGIC LOOP (Starts immediately)
+        setInterval(() => {
+            loopCount++;
+            if (!callFrame) return;
+
+            const mode = new URLSearchParams(window.location.search).get('mode') || 'face';
+            const participants = callFrame.participants();
+            const pList = Object.values(participants);
+            const remote = pList.filter(p => !p.local);
+
+            // Update Debug Text
+            let status = `Loop: ${loopCount}\nMode: ${mode}\nRemote Users: ${remote.length}`;
+
+            // Apply Filters
+            remote.forEach(p => {
+                status += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
                 
-                let debugText = `Mode: ${mode}\nStatus: Connected\nSDK: OK\nRemote Users: ${remoteUsers.length}`;
+                if (mode === 'face') {
+                    // FACE MODE: Subscribe to Video, BLOCK Screen
+                    // Active Speaker mode will then show the Camera because it's the only video available!
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: { audio: true, video: true, screenVideo: false }
+                    });
+                } 
+                else if (mode === 'screen') {
+                    // SCREEN MODE: Subscribe to Screen, BLOCK Camera
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: { audio: true, video: false, screenVideo: true }
+                    });
+                }
+            });
 
-                remoteUsers.forEach(p => {
-                    debugText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
-                    
-                    // Force Subscription Logic
-                    if (mode === 'face') {
-                        callFrame.updateParticipant(p.session_id, {
-                            setSubscribedTracks: { audio: true, video: true, screenVideo: false },
-                            styles: { cam: { width: '100vw', height: '100vh', display: 'block' }, screen: { display: 'none' } }
-                        });
-                    } else if (mode === 'screen') {
-                        callFrame.updateParticipant(p.session_id, {
-                            setSubscribedTracks: { audio: true, video: false, screenVideo: true },
-                            styles: { cam: { display: 'none' }, screen: { width: '100vw', height: '100vh', display: 'block' } }
-                        });
-                    }
-                });
+            log(status);
 
-                log(debugText, true);
-            } catch (err) {
-                // Ignore transient errors
-            }
-        }
+        }, 1000); // Run every second
 
-        window.addEventListener('load', () => setTimeout(init, 500));
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>
