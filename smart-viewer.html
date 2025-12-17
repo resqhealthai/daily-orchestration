@@ -4,122 +4,101 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        body { margin: 0; background: #000; overflow: hidden; }
-        /* The One True Video Element */
-        #the-feed {
-            position: fixed; top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            object-fit: contain; /* Keep aspect ratio (use 'cover' to crop) */
-            z-index: 10;
-        }
-        /* Hidden Audio Element */
-        #the-audio { display: none; }
+        body, html { width: 100%; height: 100%; background: #000; margin: 0; overflow: hidden; }
         
         #debug {
-            position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
-            padding: 10px; font-family: monospace; font-size: 16px; z-index: 20; pointer-events: none; border: 1px solid #0f0;
+            position: fixed; top: 10px; left: 10px; z-index: 99999;
+            color: #0f0; background: rgba(0,0,0,0.8); padding: 5px;
+            font-family: monospace; border: 1px solid #0f0;
         }
     </style>
+    <!-- Use UNPKG which worked for you -->
     <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
 </head>
 <body>
-    <div id="debug">Initializing Custom Viewer...</div>
-    
-    <!-- We build our own UI: Just one video and one audio player -->
-    <video id="the-feed" autoplay playsinline></video>
-    <audio id="the-audio" autoplay></audio>
-    
-    <script>
-        let callObject = null;
-        let joinStatus = "Loading SDK...";
+    <div id="debug">Init...</div>
 
-        // 1. SDK CHECK
-        const sdkCheck = setInterval(() => {
-            if (window.DailyIframe) {
-                clearInterval(sdkCheck);
-                init();
+    <script>
+        // === CSS RULES ===
+        // We inject these dynamically to force the layout
+        const cssFace = `
+            /* FACE MODE: Hide Screen Shares */
+            .daily-video-div.daily-screen-share { display: none !important; }
+            
+            /* Make Camera Full Screen */
+            .daily-video-div {
+                position: fixed !important; top: 0; left: 0;
+                width: 100vw !important; height: 100vh !important;
+                z-index: 10;
             }
+            .daily-video-div.local { display: none !important; }
+        `;
+
+        const cssScreen = `
+            /* SCREEN MODE: Prioritize Screen Share */
+            .daily-video-div.daily-screen-share { 
+                display: block !important;
+                position: fixed !important; top: 0; left: 0;
+                width: 100vw !important; height: 100vh !important;
+                z-index: 100 !important; /* On Top of Camera */
+            }
+            /* Hide Normal Camera (by pushing it behind or hiding) */
+            .daily-video-div:not(.daily-screen-share) {
+                z-index: 1; /* Behind */
+            }
+            .daily-video-div.local { display: none !important; }
+        `;
+
+        const d = document.getElementById('debug');
+        
+        setInterval(() => {
+            if(window.DailyIframe) init();
         }, 500);
 
-        function updateDebug(msg) {
-            if(msg) joinStatus = msg;
-            const d = document.getElementById('debug');
-            if(d) d.innerText = `Status: ${joinStatus}`;
-        }
+        let hasInit = false;
 
-        // 2. MAIN INIT
         async function init() {
+            if(hasInit) return;
+            hasInit = true;
+            d.innerText = "SDK Loaded";
+
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
-            const mode = params.get('mode') || 'face'; // 'face' or 'screen'
+            const mode = params.get('mode') || 'face';
 
-            if (!roomUrl) { updateDebug("Error: No roomUrl"); return; }
+            if(!roomUrl) { d.innerText = "No URL"; return; }
 
-            // === USE CUSTOM CALL OBJECT (No UI) ===
-            callObject = window.DailyIframe.createCallObject({
-                subscribeToTracksAutomatically: true 
+            // Select CSS based on mode
+            const myCSS = (mode === 'face') ? cssFace : cssScreen;
+
+            // Create Frame
+            const callFrame = window.DailyIframe.createFrame(document.body, {
+                showLeaveButton: false,
+                showFullscreenButton: false,
+                iframeStyle: {
+                    position: 'fixed', width: '100%', height: '100%', border: '0'
+                },
+                cssText: myCSS // <--- Apply the filter
             });
 
-            updateDebug("Joining...");
+            d.innerText = "Joining...";
 
-            // 3. LISTEN FOR TRACKS
-            // This event fires whenever a video/audio track starts (Camera or Screen)
-            callObject.on('track-started', (e) => {
-                // e.participant: The user who started the track
-                // e.track: The actual MediaStreamTrack (video/audio)
-                
-                if (e.participant.local) return; // Ignore self
-
-                updateDebug(`Track Rx: ${e.track.kind} (${e.type})`);
-
-                const videoTag = document.getElementById('the-feed');
-                const audioTag = document.getElementById('the-audio');
-
-                // LOGIC: ROUTE TRACKS TO TAGS
-                
-                if (e.track.kind === 'audio') {
-                    // Always play audio (browser handles mixing)
-                    // Or only play on 'face' display to prevent echo?
-                    // Let's enable on both for now, rely on one display being muted physically.
-                    audioTag.srcObject = new MediaStream([e.track]);
-                }
-                
-                if (e.track.kind === 'video') {
-                    // Check if this is a Screen Share or Camera
-                    // daily-js marks screen video tracks explicitly
-                    
-                    const isScreen = (e.type === 'screenVideo'); // Daily-specific field check
-                    
-                    if (mode === 'face') {
-                        // FACE DISPLAY: Only attach if it is NOT a screen
-                        if (!isScreen) {
-                            console.log("Attaching Camera to Main Display");
-                            videoTag.srcObject = new MediaStream([e.track]);
-                            updateDebug("Showing: Instructor Camera");
-                        }
-                    } 
-                    else if (mode === 'screen') {
-                        // SCREEN DISPLAY: Only attach if it IS a screen
-                        if (isScreen) {
-                            console.log("Attaching Screen to Extended Display");
-                            videoTag.srcObject = new MediaStream([e.track]);
-                            updateDebug("Showing: Instructor Screen");
-                        }
-                    }
-                }
-            });
-
-            // 4. JOIN
             try {
-                await callObject.join({ 
+                await callFrame.join({
                     url: roomUrl,
+                    showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
-                    userName: `Display-${mode.toUpperCase()}`
+                    userName: `Display-${mode}`,
+                    
+                    // KEY: Use Grid mode (activeSpeaker: false)
+                    // This forces all videos to render, letting our CSS filter them.
+                    activeSpeakerMode: false,
+                    subscribeToTracksAutomatically: true
                 });
-                updateDebug("Joined (Waiting for video...)");
+                d.innerText = `Active (${mode})`;
             } catch(e) {
-                updateDebug(`Error: ${e.message}`);
+                d.innerText = `Error: ${e.message}`;
             }
         }
     </script>
