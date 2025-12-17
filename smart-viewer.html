@@ -4,22 +4,34 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; overflow: hidden; }
+        body { margin: 0; background: #000; overflow: hidden; }
+        /* The One True Video Element */
+        #the-feed {
+            position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            object-fit: contain; /* Keep aspect ratio (use 'cover' to crop) */
+            z-index: 10;
+        }
+        /* Hidden Audio Element */
+        #the-audio { display: none; }
+        
         #debug {
             position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
-            padding: 10px; font-family: monospace; font-size: 16px; z-index: 20000; pointer-events: none; border: 1px solid #0f0;
+            padding: 10px; font-family: monospace; font-size: 16px; z-index: 20; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
-    <!-- Use the Official API CDN (Confirmed Working) -->
-    <script crossorigin src="https://api.daily.co/daily.js"></script>
+    <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
 </head>
 <body>
-    <div id="debug">Initializing...</div>
+    <div id="debug">Initializing Custom Viewer...</div>
+    
+    <!-- We build our own UI: Just one video and one audio player -->
+    <video id="the-feed" autoplay playsinline></video>
+    <audio id="the-audio" autoplay></audio>
     
     <script>
-        let callFrame = null;
-        let loopCount = 0;
-        let joinStatus = "Waiting for SDK...";
+        let callObject = null;
+        let joinStatus = "Loading SDK...";
 
         // 1. SDK CHECK
         const sdkCheck = setInterval(() => {
@@ -29,98 +41,86 @@
             }
         }, 500);
 
+        function updateDebug(msg) {
+            if(msg) joinStatus = msg;
+            const d = document.getElementById('debug');
+            if(d) d.innerText = `Status: ${joinStatus}`;
+        }
+
         // 2. MAIN INIT
         async function init() {
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
-            const mode = params.get('mode') || 'face';
+            const mode = params.get('mode') || 'face'; // 'face' or 'screen'
 
-            if (!roomUrl) { joinStatus = "Error: No roomUrl"; updateDebug(); return; }
+            if (!roomUrl) { updateDebug("Error: No roomUrl"); return; }
 
-            // Create Frame
-            callFrame = window.DailyIframe.createFrame(document.body, {
-                showLeaveButton: false,
-                showFullscreenButton: false,
-                showUserName: false,
-                iframeStyle: {
-                    position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', border: '0', zIndex: '1'
+            // === USE CUSTOM CALL OBJECT (No UI) ===
+            callObject = window.DailyIframe.createCallObject({
+                subscribeToTracksAutomatically: true 
+            });
+
+            updateDebug("Joining...");
+
+            // 3. LISTEN FOR TRACKS
+            // This event fires whenever a video/audio track starts (Camera or Screen)
+            callObject.on('track-started', (e) => {
+                // e.participant: The user who started the track
+                // e.track: The actual MediaStreamTrack (video/audio)
+                
+                if (e.participant.local) return; // Ignore self
+
+                updateDebug(`Track Rx: ${e.track.kind} (${e.type})`);
+
+                const videoTag = document.getElementById('the-feed');
+                const audioTag = document.getElementById('the-audio');
+
+                // LOGIC: ROUTE TRACKS TO TAGS
+                
+                if (e.track.kind === 'audio') {
+                    // Always play audio (browser handles mixing)
+                    // Or only play on 'face' display to prevent echo?
+                    // Let's enable on both for now, rely on one display being muted physically.
+                    audioTag.srcObject = new MediaStream([e.track]);
+                }
+                
+                if (e.track.kind === 'video') {
+                    // Check if this is a Screen Share or Camera
+                    // daily-js marks screen video tracks explicitly
+                    
+                    const isScreen = (e.type === 'screenVideo'); // Daily-specific field check
+                    
+                    if (mode === 'face') {
+                        // FACE DISPLAY: Only attach if it is NOT a screen
+                        if (!isScreen) {
+                            console.log("Attaching Camera to Main Display");
+                            videoTag.srcObject = new MediaStream([e.track]);
+                            updateDebug("Showing: Instructor Camera");
+                        }
+                    } 
+                    else if (mode === 'screen') {
+                        // SCREEN DISPLAY: Only attach if it IS a screen
+                        if (isScreen) {
+                            console.log("Attaching Screen to Extended Display");
+                            videoTag.srcObject = new MediaStream([e.track]);
+                            updateDebug("Showing: Instructor Screen");
+                        }
+                    }
                 }
             });
 
-            joinStatus = "Joining...";
-            updateDebug();
-
+            // 4. JOIN
             try {
-                await callFrame.join({ 
+                await callObject.join({ 
                     url: roomUrl,
-                    showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
-                    userName: `Display-${mode.toUpperCase()}`,
-                    
-                    // CONFIGURATION:
-                    subscribeToTracksAutomatically: true, // FAST CONNECT
-                    activeSpeakerMode: false // GRID MODE (Allows separate styles)
+                    userName: `Display-${mode.toUpperCase()}`
                 });
-                joinStatus = "Joined.";
+                updateDebug("Joined (Waiting for video...)");
             } catch(e) {
-                joinStatus = `Error: ${e.message}`;
+                updateDebug(`Error: ${e.message}`);
             }
-        }
-
-        // 3. STYLE ENFORCEMENT LOOP
-        setInterval(() => {
-            loopCount++;
-            
-            if (callFrame) {
-                const mode = new URLSearchParams(window.location.search).get('mode') || 'face';
-                const participants = callFrame.participants();
-                
-                for (const id in participants) {
-                    const p = participants[id];
-                    if (p.local) continue; // Skip self
-
-                    // === THE MAGIC FIX ===
-                    // Instead of unsubscribing (which errors), we use the 'styles' API
-                    // to set the specific video track to 'display: none'.
-                    
-                    if (mode === 'face') {
-                        // FACE MODE:
-                        // Cam -> Full Screen
-                        // Screen -> Hidden
-                        callFrame.updateParticipant(id, {
-                            styles: {
-                                cam: { 
-                                    width: '100vw', height: '100vh', 
-                                    display: 'block', 
-                                    video: { objectFit: 'cover' } 
-                                },
-                                screen: { display: 'none' }
-                            }
-                        });
-                    } else if (mode === 'screen') {
-                        // SCREEN MODE:
-                        // Cam -> Hidden
-                        // Screen -> Full Screen
-                        callFrame.updateParticipant(id, {
-                            styles: {
-                                cam: { display: 'none' },
-                                screen: { 
-                                    width: '100vw', height: '100vh', 
-                                    display: 'block',
-                                    video: { objectFit: 'contain' } // Keep aspect ratio for text
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-            updateDebug();
-        }, 1000);
-
-        function updateDebug() {
-            const d = document.getElementById('debug');
-            if (d) d.innerText = `Loop: ${loopCount}\nStatus: ${joinStatus}`;
         }
     </script>
 </body>
