@@ -7,7 +7,6 @@
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
     </style>
-    <!-- Official Daily SDK -->
     <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
 <body>
@@ -27,62 +26,43 @@
 
             if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
-            // 1. CREATE FRAME
+            // === CUSTOM CSS STRATEGY ===
+            let customCSS = '';
+            
+            if (mode === 'face') {
+                // FACE MODE:
+                // 1. Hide the Local User (Self-view)
+                // 2. Hide any video element that is a screen share
+                // 3. Ensure the active speaker (camera) takes up full space
+                customCSS = `
+                    .daily-video-div.daily-screen-share { display: none !important; }
+                    .daily-video-element.daily-screen-share { display: none !important; }
+                    /* Force non-screen videos to fill space */
+                    .daily-video-div { width: 100% !important; height: 100% !important; }
+                `;
+            } else if (mode === 'screen') {
+                // SCREEN MODE:
+                // 1. Hide Local User
+                // 2. Allow default behavior (Active Speaker layout prioritizes screen share)
+                customCSS = `
+                    /* No specific hiding needed, Daily prioritizes screens by default */
+                `;
+            }
+
+            // CREATE FRAME
             const callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 },
+                cssText: customCSS // Inject our CSS
             });
 
-            // 2. TRACK ENFORCEMENT LOGIC
-            const enforceMode = (p) => {
-                if (p.local) return; // Ignore self
+            console.log(`Joining ${roomUrl} in ${mode} mode...`);
 
-                // MODE: FACE (Main Display)
-                // Goal: NEVER show screen share. Force Camera.
-                if (mode === 'face') {
-                    // We explicitly subscribe to Audio/Video, but BLOCK ScreenVideo
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: {
-                            audio: true,
-                            video: true,
-                            screenVideo: false, // <--- THE KILL SWITCH
-                            screenAudio: false
-                        }
-                    });
-                    console.log(`[Face Mode] Blocked screen share for ${p.user_name}`);
-                }
-                
-                // MODE: SCREEN (Extended Display)
-                // Goal: Prioritize Screen.
-                // We leave default behavior (Active Speaker), which naturally prioritizes screen.
-                // But we ensure screen is subscribed.
-                if (mode === 'screen' && p.screen) {
-                    callFrame.updateParticipant(p.session_id, {
-                        setSubscribedTracks: {
-                            audio: true,
-                            video: true,
-                            screenVideo: true,
-                            screenAudio: true
-                        }
-                    });
-                }
-            };
-
-            // 3. LISTEN FOR PARTICIPANTS (To apply logic)
-            // When someone joins or updates (starts sharing screen), re-enforce rules
-            callFrame.on('participant-joined', (e) => enforceMode(e.participant));
-            callFrame.on('participant-updated', (e) => {
-                // Only trigger if screen state changed to avoid loops
-                if (e.participant.screen) enforceMode(e.participant);
-            });
-
-            // 4. JOIN ROOM
             try {
-                console.log(`Joining ${roomUrl} in ${mode} mode...`);
                 await callFrame.join({ 
                     url: roomUrl,
-                    showLocalVideo: false,
+                    showLocalVideo: false, // Hide self
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`
