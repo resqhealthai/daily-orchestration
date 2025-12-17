@@ -3,86 +3,56 @@
 <head>
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
-        .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
-        h1 { font-size: 24px; margin-bottom: 10px; }
-        p { font-size: 16px; color: #ccc; }
-    </style>
-    
-    <!-- CRITICAL FIX: Use the Official Daily.co Script -->
     <script crossorigin src="https://api.daily.co/daily.js"></script>
-    
+    <style>body { margin: 0; background: #000; overflow: hidden; }</style>
 </head>
 <body>
-    <div id="error-msg" class="error" style="display:none;"></div>
-    
     <script>
-        function showError(title, detail) {
-            const el = document.getElementById('error-msg');
-            el.style.display = 'block';
-            el.innerHTML = `<h1>${title}</h1><p>${detail || ''}</p>`;
-        }
-
         async function init() {
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            if (!roomUrl) {
-                showError("Configuration Error", "No 'roomUrl' parameter provided.");
-                return;
+            // 1. DEFINE CUSTOM CSS FOR EACH MODE
+            // Note: These selectors target Daily's internal elements
+            
+            let customCSS = '';
+            
+            if (mode === 'face') {
+                // FACE MODE: Hide Screen Shares, Show Video
+                // We target the screen share container and hide it
+                customCSS = `
+                    .daily-video-div.daily-screen-share { display: none !important; }
+                    .daily-video-element.daily-screen-share { display: none !important; }
+                `;
+            } else if (mode === 'screen') {
+                // SCREEN MODE: Prioritize Screen Share
+                // If there is no screen share, this might show black or active speaker
+                // We try to hide normal video tiles if a screen share exists
+                // (This is trickier, but usually Active Speaker layout handles it well)
+                // For now, let's leave it as default Active Speaker which prefers screens
             }
 
-            // Check if library loaded
-            if (!window.DailyIframe) {
-                showError("Library Error", "window.DailyIframe is undefined. Script failed to load.");
-                return;
-            }
+            // 2. CREATE FRAME
+            const callFrame = window.DailyIframe.createFrame(document.body, {
+                showLeaveButton: false,
+                showFullscreenButton: false,
+                iframeStyle: { width: '100%', height: '100%', border: '0' },
+                // Inject the CSS
+                cssText: customCSS
+            });
 
-            try {
-                // Create the call frame
-                const callFrame = window.DailyIframe.createFrame(document.body, {
-                    showLeaveButton: false,
-                    showFullscreenButton: false,
-                    iframeStyle: {
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        border: 'none',
-                        zIndex: 9999
-                    }
-                });
-
-                console.log(`Joining: ${roomUrl}`);
-
-                // Join room
-                await callFrame.join({ 
-                    url: roomUrl,
-                    showLocalVideo: false,
-                    startVideoOff: true,
-                    startAudioOff: false,
-                    userName: `Display-${mode}`
-                });
-
-            } catch (e) {
-                showError("Join Failed", e.message);
-            }
+            // 3. JOIN
+            await callFrame.join({ 
+                url: roomUrl,
+                showLocalVideo: false,
+                startVideoOff: true,
+                startAudioOff: false,
+                userName: `Display-${mode}`
+            });
         }
 
-        window.addEventListener('load', () => {
-            // Give the script a moment to initialize
-            setTimeout(() => {
-                if (window.DailyIframe) {
-                    init();
-                } else {
-                    showError("Timeout", "Daily.co script failed to load from https://api.daily.co/daily.js");
-                }
-            }, 500);
-        });
+        window.addEventListener('load', () => setTimeout(init, 500));
     </script>
 </body>
 </html>
