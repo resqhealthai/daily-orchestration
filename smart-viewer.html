@@ -6,15 +6,6 @@
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
         .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
-        /* Base style for all videos: absolute full screen */
-        .daily-video-div {
-            position: fixed !important;
-            top: 0 !important; 
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            z-index: 1;
-        }
     </style>
     <script crossorigin src="https://api.daily.co/daily.js"></script>
 </head>
@@ -45,66 +36,96 @@
             console.log(`Joining ${roomUrl} in ${mode} mode...`);
 
             try {
-                // 2. JOIN (Force Grid/Active Speaker OFF)
+                // 2. JOIN
                 await callFrame.join({ 
                     url: roomUrl,
                     showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    activeSpeakerMode: false // Grid Mode
+                    activeSpeakerMode: false // Start in Grid mode
                 });
 
-                // 3. START LAYOUT ENFORCER LOOP
-                // This runs every 500ms to audit the DOM and force visibility
-                setInterval(() => {
-                    enforceLayout(mode);
-                }, 500);
+                // 3. LISTEN FOR EVENTS
+                // This is the correct way to handle layout changes
+                
+                const updateLayout = () => {
+                    const participants = callFrame.participants();
+                    
+                    // Logic: We must "pin" the participant we want to see.
+                    // Pinning forces them to fill the screen in Active Speaker mode.
+                    
+                    let targetId = null;
+
+                    for (const id in participants) {
+                        const p = participants[id];
+                        if (p.local) continue; // Skip self
+
+                        if (mode === 'face') {
+                            // Look for a user who HAS video but IS NOT a screen share
+                            if (p.video && !p.screen) {
+                                targetId = id;
+                                break; 
+                            }
+                        } else if (mode === 'screen') {
+                            // Look for a user who HAS screen sharing active
+                            if (p.screen) {
+                                targetId = id;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (targetId) {
+                        // FORCE FOCUS ON THIS ID
+                        console.log(`[${mode}] Pinning participant: ${targetId}`);
+                        
+                        // We set mode to 'active-speaker' which shows one big video
+                        callFrame.setShowNamesMode(false); // Hide names
+                        callFrame.updateParticipant(targetId, {
+                            setSubscribedTracks: { audio: true, video: true, screenVideo: true }, // Ensure we have data
+                            styles: { cam: { width: '100%', height: '100%' }, screen: { width: '100%', height: '100%' } }
+                        });
+                        
+                        // "Spotlight" them (Pin logic equivalent)
+                         // Note: daily-js doesn't have a direct 'pin' method exposed easily in 1.0 without custom layouts,
+                         // So we simulate it by setting the track priority or ensuring they are the only ones subscribed?
+                         // Actually, keeping it simple:
+                         
+                         // REVERT TO SUBSCRIPTION LOGIC (It works if we don't block everything)
+                         // We will subscribe to the target, and UNSUBSCRIBE from everyone else.
+                         
+                         for (const otherId in participants) {
+                             if (otherId !== targetId && !participants[otherId].local) {
+                                 callFrame.updateParticipant(otherId, {
+                                     setSubscribedTracks: { audio: true, video: false, screenVideo: false }
+                                 });
+                             }
+                         }
+                         
+                         // Ensure target is fully subscribed
+                         callFrame.updateParticipant(targetId, {
+                             setSubscribedTracks: { 
+                                 audio: true, 
+                                 video: (mode === 'face'), 
+                                 screenVideo: (mode === 'screen') 
+                             }
+                         });
+                    }
+                };
+
+                // Run layout logic on events
+                callFrame.on('participant-joined', updateLayout);
+                callFrame.on('participant-updated', updateLayout);
+                callFrame.on('active-speaker-change', updateLayout);
+                
+                // Run once immediately
+                setTimeout(updateLayout, 1000);
+                setTimeout(updateLayout, 3000); // Retry in case video was slow to start
 
             } catch (e) {
                 showError("Join Failed", e.message);
             }
-        }
-
-        // === THE LOGIC ENGINE ===
-        function enforceLayout(mode) {
-            // Get all video containers injected by Daily
-            const videos = document.querySelectorAll('.daily-video-div');
-            
-            videos.forEach(div => {
-                // Check if this tile is a Screen Share
-                const isScreen = div.classList.contains('daily-screen-share');
-                
-                // Check if this tile is Self (Local)
-                const isLocal = div.classList.contains('local');
-
-                if (isLocal) {
-                    // ALWAYS hide self
-                    div.style.display = 'none';
-                    return;
-                }
-
-                if (mode === 'face') {
-                    // FACE MODE: 
-                    // Show Camera (Not Screen), Hide Screen
-                    if (isScreen) {
-                        div.style.display = 'none';
-                    } else {
-                        div.style.display = 'block';
-                        div.style.zIndex = '100'; // Bring to front
-                    }
-                } 
-                else if (mode === 'screen') {
-                    // SCREEN MODE:
-                    // Show Screen, Hide Camera
-                    if (isScreen) {
-                        div.style.display = 'block';
-                        div.style.zIndex = '100'; // Bring to front
-                    } else {
-                        div.style.display = 'none';
-                    }
-                }
-            });
         }
 
         window.addEventListener('load', () => setTimeout(init, 500));
