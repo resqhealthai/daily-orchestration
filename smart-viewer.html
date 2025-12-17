@@ -4,27 +4,14 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        /* 1. FORCE IFRAME CONTAINER FULL SCREEN */
-        html, body { 
-            width: 100%; height: 100%; margin: 0; padding: 0; 
-            background: #000; overflow: hidden; 
-        }
+        /* BASE LAYOUT */
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; overflow: hidden; }
         
-        /* 2. FORCE VIDEO TILES FULL SCREEN (The "Stacking" Trick) */
-        /* This forces every video tile to try and fill the screen. */
-        /* We will use z-index in JS to decide which one wins. */
-        .daily-video-div {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: cover !important;
-        }
-
         #debug {
-            position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
-            padding: 10px; font-family: monospace; font-size: 16px; z-index: 20000; pointer-events: none; border: 1px solid #0f0;
+            position: fixed; top: 10px; left: 10px; 
+            color: #0f0; background: rgba(0,0,0,0.8);
+            padding: 10px; font-family: monospace; font-size: 16px; 
+            z-index: 20000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
     <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
@@ -34,10 +21,10 @@
     
     <script>
         let callFrame = null;
-        let loopCount = 0;
         let joinStatus = "Waiting for SDK...";
+        let loopCount = 0;
 
-        // 1. SDK CHECK
+        // 1. SDK CHECK (Safety first)
         const sdkCheck = setInterval(() => {
             if (window.DailyIframe) {
                 clearInterval(sdkCheck);
@@ -53,17 +40,54 @@
 
             if (!roomUrl) { joinStatus = "Error: No roomUrl"; updateDebug(); return; }
 
-            // Create Frame
+            // === 3. THE CSS FILTER STRATEGY ===
+            // We inject this directly into the Daily Iframe to control the layout
+            let injectedCSS = `
+                /* GLOBAL RESET: Hide the self-view */
+                .daily-video-div.local { display: none !important; }
+                
+                /* GLOBAL: Force ALL video tiles to be full screen (overlapping) */
+                .daily-video-div {
+                    position: fixed !important;
+                    top: 0 !important; left: 0 !important;
+                    width: 100vw !important; height: 100vh !important;
+                    z-index: 1; /* Base Level */
+                    background: #000;
+                }
+            `;
+
+            if (mode === 'face') {
+                // FACE MODE:
+                // 1. Hide Screen Shares
+                // 2. Camera tiles remain visible (and full screen due to global rule above)
+                injectedCSS += `
+                    .daily-screen-share { display: none !important; }
+                `;
+            } 
+            else if (mode === 'screen') {
+                // SCREEN MODE:
+                // 1. Force Screen Shares to Top Layer (Z-Index 100)
+                // 2. Camera tiles sit underneath (effectively hidden)
+                injectedCSS += `
+                    .daily-screen-share { 
+                        display: block !important; 
+                        z-index: 100 !important; 
+                    }
+                `;
+            }
+
+            // Create Frame with CSS
             callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
                 showUserName: false,
+                cssText: injectedCSS, // <--- INJECT THE RULES
                 iframeStyle: {
                     position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', border: '0', zIndex: '1'
                 }
             });
 
-            joinStatus = "Joining...";
+            joinStatus = `Joining (${mode})...`;
             updateDebug();
 
             try {
@@ -74,67 +98,21 @@
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
                     
-                    // KEY CONFIGURATION:
-                    subscribeToTracksAutomatically: true, // 1. Get Video Fast (Fixes Black Screen)
-                    activeSpeakerMode: false // 2. Grid Mode (Renders ALL videos to DOM)
+                    // CONFIGURATION:
+                    subscribeToTracksAutomatically: true, // FASTEST CONNECTION
+                    activeSpeakerMode: false // GRID MODE (Renders both Camera + Screen tiles)
                 });
-                joinStatus = "Joined.";
+                joinStatus = "Active";
             } catch(e) {
                 joinStatus = `Error: ${e.message}`;
             }
         }
 
-        // 3. VISUAL STACKING LOOP
+        // 4. STATUS LOOP
         setInterval(() => {
             loopCount++;
             updateDebug();
-            
-            // This loop looks at the actual HTML video elements Daily created
-            // and forces the right one to the top (z-index).
-            const mode = new URLSearchParams(window.location.search).get('mode') || 'face';
-            
-            // Find all video containers
-            // Daily uses classes like "daily-video-div" and specific data attributes
-            const videos = document.querySelectorAll('.daily-video-div');
-            
-            videos.forEach(div => {
-                // Identify what kind of video this is
-                // Daily usually marks screen shares with a class or data attribute
-                // If specific class isn't stable, we check the video element inside?
-                // Let's rely on Daily's standard class: 'daily-screen-share'
-                
-                const isScreen = div.classList.contains('daily-screen-share');
-                const isLocal = div.classList.contains('local'); // Hide self
-                
-                if (isLocal) {
-                    div.style.display = 'none';
-                    return;
-                }
-
-                if (mode === 'face') {
-                    // FACE MODE:
-                    // Camera (Not Screen) -> Z-Index 100 (Top)
-                    // Screen -> Display None
-                    if (isScreen) {
-                        div.style.display = 'none';
-                    } else {
-                        div.style.display = 'block';
-                        div.style.zIndex = '100';
-                    }
-                } else if (mode === 'screen') {
-                    // SCREEN MODE:
-                    // Screen -> Z-Index 100 (Top)
-                    // Camera -> Display None
-                    if (isScreen) {
-                        div.style.display = 'block';
-                        div.style.zIndex = '100';
-                    } else {
-                        div.style.display = 'none';
-                    }
-                }
-            });
-
-        }, 500);
+        }, 1000);
 
         function updateDebug() {
             const d = document.getElementById('debug');
