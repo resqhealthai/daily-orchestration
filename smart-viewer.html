@@ -26,47 +26,85 @@
 
             if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
-            // === CUSTOM CSS STRATEGY ===
-            let customCSS = '';
-            
-            if (mode === 'face') {
-                // FACE MODE:
-                // 1. Hide the Local User (Self-view)
-                // 2. Hide any video element that is a screen share
-                // 3. Ensure the active speaker (camera) takes up full space
-                customCSS = `
-                    .daily-video-div.daily-screen-share { display: none !important; }
-                    .daily-video-element.daily-screen-share { display: none !important; }
-                    /* Force non-screen videos to fill space */
-                    .daily-video-div { width: 100% !important; height: 100% !important; }
-                `;
-            } else if (mode === 'screen') {
-                // SCREEN MODE:
-                // 1. Hide Local User
-                // 2. Allow default behavior (Active Speaker layout prioritizes screen share)
-                customCSS = `
-                    /* No specific hiding needed, Daily prioritizes screens by default */
-                `;
-            }
-
-            // CREATE FRAME
+            // 1. CREATE FRAME
             const callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 },
-                cssText: customCSS // Inject our CSS
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
             });
 
             console.log(`Joining ${roomUrl} in ${mode} mode...`);
 
             try {
+                // 2. JOIN WITH SPECIFIC LAYOUT CONFIG
                 await callFrame.join({ 
                     url: roomUrl,
-                    showLocalVideo: false, // Hide self
+                    showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
-                    userName: `Display-${mode.toUpperCase()}`
+                    userName: `Display-${mode.toUpperCase()}`,
+                    
+                    // FORCE LAYOUT CONFIGURATION
+                    activeSpeakerMode: false, // Turn off auto-switching
+                    layoutConfig: {
+                        mode: "active-speaker", // Use Active Speaker (standard grid)
+                        showParticipantsBar: false // Hide the bottom bar
+                    }
                 });
+
+                // 3. APPLY POST-JOIN LOGIC
+                if (mode === 'face') {
+                    // FACE MODE: We want to see the Instructor, NOT the screen share.
+                    // We subscribe ONLY to camera video, block screen video.
+                    const participants = callFrame.participants();
+                    for (const id in participants) {
+                        if (participants[id].local) continue;
+                        callFrame.updateParticipant(id, {
+                            setSubscribedTracks: {
+                                audio: true,
+                                video: true,
+                                screenVideo: false // BLOCK SCREEN
+                            }
+                        });
+                    }
+                    
+                    // Listen for new people to apply rules
+                    callFrame.on('participant-joined', (e) => {
+                        callFrame.updateParticipant(e.participant.session_id, {
+                            setSubscribedTracks: {
+                                audio: true,
+                                video: true,
+                                screenVideo: false
+                            }
+                        });
+                    });
+                } 
+                else if (mode === 'screen') {
+                    // SCREEN MODE: We ONLY want to see the screen.
+                    // We subscribe ONLY to screen video.
+                     const participants = callFrame.participants();
+                    for (const id in participants) {
+                        if (participants[id].local) continue;
+                         callFrame.updateParticipant(id, {
+                            setSubscribedTracks: {
+                                audio: true,
+                                video: false, // BLOCK FACE
+                                screenVideo: true // ALLOW SCREEN
+                            }
+                        });
+                    }
+                     // Listen for new people
+                    callFrame.on('participant-joined', (e) => {
+                        callFrame.updateParticipant(e.participant.session_id, {
+                            setSubscribedTracks: {
+                                audio: true,
+                                video: false,
+                                screenVideo: true
+                            }
+                        });
+                    });
+                }
+
             } catch (e) {
                 showError("Join Failed", e.message);
             }
