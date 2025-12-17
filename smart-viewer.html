@@ -15,10 +15,7 @@
             justify-content: center; 
             align-items: center; 
             background-color: #121212;
-            
-            /* CUSTOM GRAPHIC URL */
             background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
-            
             background-size: cover; 
             background-position: center;
             background-repeat: no-repeat;
@@ -33,15 +30,13 @@
             top: 0; left: 0; 
             z-index: 1; 
             background: transparent;
-            transition: opacity 0.5s ease; /* Smooth fade in/out */
+            transition: opacity 0.5s ease;
         }
 
-        /* Class to hide video (reveal background) */
         .hidden { opacity: 0; }
     </style>
 </head>
 <body>
-    <!-- Video starts hidden so background shows -->
     <video id="videoEl" class="hidden" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
@@ -68,7 +63,7 @@
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
-        // 3. LOGIC: IGNORE KIOSKS & TABLETS
+        // 3. LOGIC
         const checkParticipant = (p) => {
             if (p.local) return { ignore: true };
             const name = (p.user_name || "Guest").toLowerCase();
@@ -78,18 +73,23 @@
             return { ignore: false, name: p.user_name || "Guest" };
         };
 
-        // 4. SUBSCRIPTION LOGIC
+        // 4. SUBSCRIPTION LOGIC (UPDATED FOR AUDIO)
         const handleNewParticipant = (p) => {
             const check = checkParticipant(p);
             if (check.ignore) return;
 
             log(`Accepted Instructor: ${check.name}`);
 
-            let subs = { audio: false, video: false, screenVideo: false };
+            let subs = {};
             if (MODE === 'face') {
-                subs = { audio: true, video: true, screenVideo: false };
+                // Monitor 1: Audio Hub
+                // We want Mic Audio AND Screen Audio (for YouTube etc)
+                // We DO NOT want Screen Video (that's for Monitor 2)
+                subs = { audio: true, video: true, screenVideo: false, screenAudio: true };
             } else if (MODE === 'screen') {
-                subs = { audio: false, video: false, screenVideo: true };
+                // Monitor 2: Visual Hub
+                // We want Screen Video Only. No Audio (to prevent echo).
+                subs = { audio: false, video: false, screenVideo: true, screenAudio: false };
             }
 
             call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
@@ -104,9 +104,17 @@
 
             // Mode Check
             const isScreenShare = p.screen; 
+            
             if (MODE === 'face') {
+                // Monitor 1:
+                // Block Screen VIDEO. 
+                // Allow Screen AUDIO (YouTube).
                 if (track.kind === 'video' && isScreenShare) return;
             } else if (MODE === 'screen') {
+                // Monitor 2:
+                // Block Face Camera.
+                // Block All Audio (handled by Monitor 1).
+                if (track.kind === 'audio') return; 
                 if (track.kind === 'video' && !isScreenShare) return;
             }
 
@@ -116,7 +124,7 @@
             if (targetEl.srcObject?.id !== track.id) {
                 targetEl.srcObject = new MediaStream([track]);
                 
-                // Show Video (Fade In)
+                // Show Video
                 if (track.kind === 'video') {
                     videoEl.classList.remove('hidden');
                 }
@@ -131,14 +139,12 @@
             }
         };
 
-        // 6. TRACK STOPPED (Show Background)
+        // 6. TRACK STOPPED
         const handleTrackStopped = (evt) => {
             const track = evt.track;
             if (!track) return;
             
             if (track.kind === 'video') {
-                log("Video Stopped. Showing Background.");
-                // If this was the active track, hide the video element
                 if (videoEl.srcObject && videoEl.srcObject.getTracks().some(t => t.id === track.id)) {
                     videoEl.srcObject = null;
                     videoEl.classList.add('hidden'); 
@@ -146,7 +152,7 @@
             }
         };
 
-        // 7. EVENT LISTENERS
+        // 7. EVENTS
         call.on('participant-joined', (evt) => handleNewParticipant(evt.participant));
         call.on('participant-updated', (evt) => handleNewParticipant(evt.participant));
         call.on('track-started', handleTrack);
