@@ -26,85 +26,62 @@
 
             if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
-            // 1. CREATE FRAME
+            // === CSS INJECTION STRATEGY ===
+            let customCSS = '';
+            
+            if (mode === 'face') {
+                // FACE MODE:
+                // 1. Hide Screen Shares
+                // 2. Hide Self
+                customCSS = `
+                    /* Hide Screen Share Elements */
+                    .daily-video-div.daily-screen-share { display: none !important; }
+                    .daily-video-element.daily-screen-share { display: none !important; }
+                    
+                    /* Hide Local Video (Self) */
+                    .daily-video-div.local { display: none !important; }
+                    
+                    /* Make remaining video (Instructor) fill screen */
+                    .daily-video-div { width: 100vw !important; height: 100vh !important; top: 0 !important; left: 0 !important; }
+                `;
+            } else if (mode === 'screen') {
+                // SCREEN MODE:
+                // 1. Hide Face Videos
+                // 2. Hide Self
+                customCSS = `
+                    /* Hide Normal Camera Elements */
+                    .daily-video-div:not(.daily-screen-share) { display: none !important; }
+                    
+                    /* Make Screen Share fill screen */
+                    .daily-video-div.daily-screen-share { 
+                        display: block !important; 
+                        width: 100vw !important; 
+                        height: 100vh !important; 
+                        top: 0 !important; 
+                        left: 0 !important; 
+                    }
+                `;
+            }
+
+            // CREATE FRAME
             const callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 },
+                cssText: customCSS
             });
 
             console.log(`Joining ${roomUrl} in ${mode} mode...`);
 
             try {
-                // 2. JOIN WITH SPECIFIC LAYOUT CONFIG
                 await callFrame.join({ 
                     url: roomUrl,
                     showLocalVideo: false,
                     startVideoOff: true,
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
-                    
-                    // FORCE LAYOUT CONFIGURATION
-                    activeSpeakerMode: false, // Turn off auto-switching
-                    layoutConfig: {
-                        mode: "active-speaker", // Use Active Speaker (standard grid)
-                        showParticipantsBar: false // Hide the bottom bar
-                    }
+                    activeSpeakerMode: false // Use Grid mode so CSS can target individual tiles
                 });
-
-                // 3. APPLY POST-JOIN LOGIC
-                if (mode === 'face') {
-                    // FACE MODE: We want to see the Instructor, NOT the screen share.
-                    // We subscribe ONLY to camera video, block screen video.
-                    const participants = callFrame.participants();
-                    for (const id in participants) {
-                        if (participants[id].local) continue;
-                        callFrame.updateParticipant(id, {
-                            setSubscribedTracks: {
-                                audio: true,
-                                video: true,
-                                screenVideo: false // BLOCK SCREEN
-                            }
-                        });
-                    }
-                    
-                    // Listen for new people to apply rules
-                    callFrame.on('participant-joined', (e) => {
-                        callFrame.updateParticipant(e.participant.session_id, {
-                            setSubscribedTracks: {
-                                audio: true,
-                                video: true,
-                                screenVideo: false
-                            }
-                        });
-                    });
-                } 
-                else if (mode === 'screen') {
-                    // SCREEN MODE: We ONLY want to see the screen.
-                    // We subscribe ONLY to screen video.
-                     const participants = callFrame.participants();
-                    for (const id in participants) {
-                        if (participants[id].local) continue;
-                         callFrame.updateParticipant(id, {
-                            setSubscribedTracks: {
-                                audio: true,
-                                video: false, // BLOCK FACE
-                                screenVideo: true // ALLOW SCREEN
-                            }
-                        });
-                    }
-                     // Listen for new people
-                    callFrame.on('participant-joined', (e) => {
-                        callFrame.updateParticipant(e.participant.session_id, {
-                            setSubscribedTracks: {
-                                audio: true,
-                                video: false,
-                                screenVideo: true
-                            }
-                        });
-                    });
-                }
-
             } catch (e) {
                 showError("Join Failed", e.message);
             }
