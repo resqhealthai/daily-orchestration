@@ -8,162 +8,95 @@
     <style>
         body { margin: 0; padding: 0; background: black; overflow: hidden; height: 100vh; display: flex; justify-content: center; align-items: center; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        #status { position: absolute; top: 10px; left: 10px; color: rgba(255,255,255,0.5); font-family: monospace; z-index: 100; pointer-events: none;}
+        #status { position: absolute; top: 10px; left: 10px; color: lime; font-family: monospace; z-index: 100; pointer-events: none; background: rgba(0,0,0,0.5); padding: 5px;}
     </style>
 </head>
 <body>
-    <div id="status">Waiting for Instructor...</div>
+    <div id="status">Waiting for 'Instructor'...</div>
     <video id="videoEl" autoplay playsinline></video>
     <audio id="audioEl" autoplay></audio>
 
     <script>
-        const log = (msg) => {
-            const el = document.getElementById('status');
-            el.innerText = msg;
-            console.log(`[SmartViewer] ${msg}`);
-        };
+        const setStatus = (msg) => document.getElementById('status').innerText = msg;
+        const log = (msg) => console.log(`[SmartViewer] ${msg}`);
 
-        // ==========================================
-        // 1. INITIALIZATION & PARAMS
-        // ==========================================
+        // 1. PARAMS
         const params = new URLSearchParams(window.location.search);
-        
-        // Support 'roomUrl' (AppleScript) or 'url' (Standard)
         const ROOM_URL = params.get('roomUrl') || params.get('url'); 
-        const MODE = params.get('mode') || 'face'; // 'face' or 'screen'
+        const MODE = params.get('mode') || 'face';
 
-        if (!ROOM_URL) {
-            log("Error: No 'roomUrl' provided.");
-            throw new Error("Missing Room URL");
-        }
+        if (!ROOM_URL) throw new Error("Missing Room URL");
 
-        // ==========================================
-        // 2. CONFIGURE CALL OBJECT
-        // ==========================================
-        // "Screen Mode" (Monitor 2) is purely passive (no Mic/Cam).
-        // "Face Mode" (Monitor 1) must be active to broadcast the student to the Instructor.
+        // 2. CONFIG
         const isPassiveMode = (MODE === 'screen');
-
         const call = window.DailyIframe.createCallObject({
-            // TAGGING: We mark ourselves as a "Kiosk".
-            // This allows other Kiosks (or our own 2nd window) to recognize and ignore us.
-            userData: { isKiosk: true, kioskMode: MODE }, 
-            userName: `MacMini-${MODE}`,
-            
-            // MANUAL SUBSCRIPTIONS: We take full control of bandwidth.
-            subscribeToTracksAutomatically: false,
-            
-            // HARDWARE CONTROL: Disable hardware entirely on the passive screen.
+            userName: `MacMini-${MODE}`, // We name ourselves clearly
+            subscribeToTracksAutomatically: false, // Manual Control
             videoSource: !isPassiveMode, 
             audioSource: !isPassiveMode,
-            
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
         });
 
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
-        // ==========================================
-        // 3. FILTER LOGIC (The "Gatekeeper")
-        // ==========================================
-        // Returns TRUE if we should strictly IGNORE this participant.
-        const shouldIgnore = (p) => {
-            // 1. Ignore Ourselves (Local)
-            if (p.local) return true; 
-            
-            // 2. Ignore other Kiosks (Tag check)
-            // This prevents Window 1 from seeing Window 2, or Location A seeing Location B.
-            if (p.userData?.isKiosk) return true; 
-            
-            // 3. Ignore Tablets & Other MacMinis (Name check)
-            // Fallback for devices that might not have the 'isKiosk' tag set but shouldn't be shown.
-            const name = (p.user_name || "").toLowerCase();
-            if (name.includes("macmini")) return true;
-            if (name.includes("tablet")) return true; 
-            if (name.includes("android")) return true;
-
-            // If they passed all checks, assume they are the Instructor.
-            return false; 
+        // 3. THE SIMPLE LOGIC: ONLY "Instructor" EXISTS
+        const isInstructor = (p) => {
+            // Check if name contains "Instructor" (case insensitive)
+            return (p.user_name || "").toLowerCase().includes("instructor");
         };
 
-        // ==========================================
-        // 4. SUBSCRIPTION LOGIC
-        // ==========================================
-        const updateSubscriptions = (participant) => {
-            if (shouldIgnore(participant)) return;
+        const updateSubscriptions = (p) => {
+            if (!isInstructor(p)) return; // Ignore everyone else
 
-            log(`Subscribing to Instructor: ${participant.user_name || participant.session_id}`);
+            log(`Found Instructor! Subscribing...`);
+            setStatus(`Instructor Connected.`);
 
             let subs = { audio: false, video: false, screenVideo: false };
-
             if (MODE === 'face') {
-                // Monitor 1: Needs Instructor Camera + Audio
                 subs = { audio: true, video: true, screenVideo: false };
             } else if (MODE === 'screen') {
-                // Monitor 2: Needs Screen Share ONLY (Audio disabled to prevent echo)
                 subs = { audio: false, video: false, screenVideo: true };
             }
-            
-            call.updateParticipant(participant.session_id, { setSubscribedTracks: subs });
+            call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
         };
 
-        // ==========================================
-        // 5. TRACK RENDERER
-        // ==========================================
         const handleTrack = (evt) => {
+            const p = evt.participant;
             const track = evt.track;
-            const participant = evt.participant;
 
-            if (!track || !participant) return;
+            if (!p || !track) return;
+            if (!isInstructor(p)) return; // Ignore non-instructors
 
-            // Security Check: Enforce the Ignore List
-            if (shouldIgnore(participant)) return;
-
-            // Mode Filter: Ensure we only show the correct track type for this monitor
+            // Mode Check
             if (MODE === 'face') {
-                // In FACE mode, we want Camera Video. If this is a Screen Share, ignore it.
-                if (track.kind === 'video' && participant.screen) return;
+                if (track.kind === 'video' && p.screen) return;
             } else if (MODE === 'screen') {
-                // In SCREEN mode, we want Screen Share. If this is a Camera, ignore it.
-                if (track.kind === 'video' && !participant.screen) return;
+                if (track.kind === 'video' && !p.screen) return;
             }
 
             const targetEl = track.kind === 'video' ? videoEl : audioEl;
+            if (targetEl.srcObject?.id === track.id) return;
 
-            // Prevent flicker: Don't re-assign if already playing this track
-            const currentTracks = targetEl.srcObject?.getTracks() || [];
-            if (currentTracks.some(t => t.id === track.id)) return;
-
-            log(`Rendering ${track.kind} from Instructor`);
-            
-            const newStream = new MediaStream([track]);
-            targetEl.srcObject = newStream;
-
-            // Robust Play: Wait for metadata to solve Safari "Stall" issues
-            targetEl.onloadedmetadata = () => {
-                targetEl.play().catch(e => log(`Autoplay failed: ${e.message}`));
-            };
+            log(`Playing ${track.kind} track`);
+            targetEl.srcObject = new MediaStream([track]);
+            targetEl.play().catch(console.error);
         };
 
-        // ==========================================
-        // 6. CLEANUP LOGIC
-        // ==========================================
-        const handleParticipantLeft = (evt) => {
-            // Re-scan to see if any valid Instructors remain.
-            const participants = call.participants();
-            const validInstructors = Object.values(participants).filter(p => !shouldIgnore(p));
-
-            if (validInstructors.length === 0) {
-                log("Instructor left. Clearing screen.");
-                videoEl.srcObject = null;
-                audioEl.srcObject = null;
-            }
-        };
-
-        // ==========================================
-        // 7. EVENT LISTENERS
-        // ==========================================
+        // 4. EVENTS
         call.on('participant-joined', (evt) => updateSubscriptions(evt.participant));
         call.on('participant-updated', (evt) => updateSubscriptions(evt.participant));
         call.on('track-started', handleTrack);
-        call.on('participant-left', handleParticipantLeft);
+
+        call.on('joined-meeting', (evt) => {
+            log("Joined. Scanning for 'Instructor'...");
+            const participants = call.participants();
+            for (const id in participants) {
+                updateSubscriptions(participants[id]);
+            }
+        });
+
+        call.join({ url: ROOM_URL });
+    </script>
+</body>
+</html>
