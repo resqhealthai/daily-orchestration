@@ -33,58 +33,71 @@
             throw new Error("Missing Room URL");
         }
 
-        // --- STATE MANAGEMENT ---
-        // We will store the instructor's ID to ensure we only render their tracks.
-        let instructorSessionId = null;
-
         // 2. Configure Call Object
         const call = window.DailyIframe.createCallObject({
             subscribeToTracksAutomatically: false,
+            dailyConfig: {
+                experimentalChromeVideoMuteLightOff: true
+            }
         });
 
         const videoEl = document.getElementById('videoEl');
         const audioEl = document.getElementById('audioEl');
 
         // 3. Helper: Subscription Logic
+        // We broadly subscribe to remote participants, but the RENDERER (handleTrack)
+        // is the final gatekeeper that decides what actually shows up.
         const updateSubscriptions = (participant) => {
-            if (participant.local) return;
-
-            // This is our instructor. Store their ID and subscribe.
-            instructorSessionId = participant.session_id;
-            log(`Found instructor: ${participant.user_name || instructorSessionId}`);
+            if (participant.local) return; // Never subscribe to self
 
             let subs = { audio: false, video: false, screenVideo: false };
 
             if (MODE === 'face') {
+                // Monitor 1: Needs Video + Audio
                 subs = { audio: true, video: true, screenVideo: false };
             } else if (MODE === 'screen') {
+                // Monitor 2: Needs Screen ONLY
                 subs = { audio: false, video: false, screenVideo: true };
             }
-            
-            call.updateParticipant(instructorSessionId, { setSubscribedTracks: subs });
+
+            log(`Requesting tracks from ${participant.user_name || participant.session_id}`);
+            call.updateParticipant(participant.session_id, { setSubscribedTracks: subs });
         };
 
-        // 4. Helper: Track Renderer (Now with Strict ID Check)
+        // 4. Helper: Track Renderer (The Absolute Gatekeeper)
         const handleTrack = (evt) => {
             const track = evt.track;
             const participant = evt.participant;
 
             if (!track || !participant) return;
 
-            // --- THE FIX ---
-            // Only render tracks that belong to our designated instructor.
-            // This explicitly blocks the local "self-view" track.
-            if (participant.session_id !== instructorSessionId) {
-                log(`Ignoring track from non-instructor (${participant.session_id})`);
+            // --- SAFETY LOCK 1: Is this ME? ---
+            // We compare IDs directly to be 100% sure.
+            const localId = call.participants().local?.session_id;
+            const isLocal = participant.local || (localId && participant.session_id === localId);
+
+            if (isLocal) {
+                // log("Blocked local track attempt."); // Optional debug
                 return;
             }
-            // ---------------
+            // ----------------------------------
 
-            if (MODE === 'face' && track.kind === 'video' && participant.screen) return; 
-            if (MODE === 'screen' && track.kind === 'video' && !participant.screen) return; 
+            // --- FILTER: Mode Logic ---
+            if (MODE === 'face') {
+                // In FACE mode: We want CAMERA video (not screen)
+                // If this is a screen share, ignore it.
+                if (track.kind === 'video' && participant.screen) return;
+            } 
+            else if (MODE === 'screen') {
+                // In SCREEN mode: We want SCREEN video only
+                // If this is NOT a screen share (i.e. a face camera), ignore it.
+                if (track.kind === 'video' && !participant.screen) return;
+            }
 
+            // --- RENDER ---
             const targetEl = track.kind === 'video' ? videoEl : audioEl;
 
+            // Don't interrupt if we are already playing this exact track ID
             const currentTracks = targetEl.srcObject?.getTracks() || [];
             if (currentTracks.some(t => t.id === track.id)) return;
 
@@ -98,38 +111,46 @@
             };
         };
 
-        // 5. Event Listeners
-        call.on('participant-joined', (evt) => {
-            // A new participant could be the instructor.
-            updateSubscriptions(evt.participant);
-        });
+        // 5. Cleanup Helper
+        const handleParticipantLeft = (evt) => {
+            log(`Participant left: ${evt.participant.user_name}`);
+            
+            // If the person currently on screen leaves, clear the screen.
+            // This prevents "frozen face" or falling back to weird states.
+            // We check if the track currently playing belongs to the person who left.
+            // (Simplification: We just clear if *any* remote user leaves to be safe, 
+            //  or we can just let the next join overwrite it. For kiosks, clearing is safer.)
+            
+            // Re-scan participants to see if anyone is left
+            const participants = call.participants();
+            const remoteCount = Object.values(participants).filter(p => !p.local).length;
 
-        call.on('participant-updated', (evt) => {
-            // Re-run if they start sharing screen later.
-            updateSubscriptions(evt.participant);
-        });
+            if (remoteCount === 0) {
+                log("Instructor left. Waiting...");
+                videoEl.srcObject = null; // Go black
+                audioEl.srcObject = null; // Silence
+            }
+        };
 
+        // 6. Event Listeners
+        call.on('participant-joined', (evt) => updateSubscriptions(evt.participant));
+        call.on('participant-updated', (evt) => updateSubscriptions(evt.participant));
         call.on('track-started', handleTrack);
+        call.on('participant-left', handleParticipantLeft);
 
         call.on('joined-meeting', (evt) => {
-            log(`Joined ${MODE} mode. Searching for instructor...`);
-            
-            // Check for existing participants who are not us.
+            log(`Joined ${MODE} mode. Scanning...`);
             const participants = call.participants();
             for (const id in participants) {
-                if (!participants[id].local) {
-                    updateSubscriptions(participants[id]);
-                    break; // Assume the first remote participant is the instructor
-                }
+                updateSubscriptions(participants[id]);
             }
         });
 
-        call.on('error', (evt) => {
-            log(`Daily Error: ${evt.errorMsg}`);
-        });
+        call.on('error', (evt) => log(`Daily Error: ${evt.errorMsg}`));
 
-        // 6. Join Room
+        // 7. Join Room
         call.join({ url: ROOM_URL });
+
     </script>
 </body>
 </html>
