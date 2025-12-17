@@ -3,53 +3,93 @@
 <head>
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        .error { color: #ff4444; padding: 40px; text-align: center; margin-top: 20%; }
+    </style>
+    <!-- Official Daily SDK -->
     <script crossorigin src="https://api.daily.co/daily.js"></script>
-    <style>body { margin: 0; background: #000; overflow: hidden; }</style>
 </head>
 <body>
+    <div id="error-msg" class="error" style="display:none;"></div>
+    
     <script>
+        function showError(title, detail) {
+            const el = document.getElementById('error-msg');
+            el.style.display = 'block';
+            el.innerHTML = `<h1>${title}</h1><p>${detail || ''}</p>`;
+        }
+
         async function init() {
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            // 1. DEFINE CUSTOM CSS FOR EACH MODE
-            // Note: These selectors target Daily's internal elements
-            
-            let customCSS = '';
-            
-            if (mode === 'face') {
-                // FACE MODE: Hide Screen Shares, Show Video
-                // We target the screen share container and hide it
-                customCSS = `
-                    .daily-video-div.daily-screen-share { display: none !important; }
-                    .daily-video-element.daily-screen-share { display: none !important; }
-                `;
-            } else if (mode === 'screen') {
-                // SCREEN MODE: Prioritize Screen Share
-                // If there is no screen share, this might show black or active speaker
-                // We try to hide normal video tiles if a screen share exists
-                // (This is trickier, but usually Active Speaker layout handles it well)
-                // For now, let's leave it as default Active Speaker which prefers screens
-            }
+            if (!roomUrl) { showError("Config Error", "No roomUrl"); return; }
 
-            // 2. CREATE FRAME
+            // 1. CREATE FRAME
             const callFrame = window.DailyIframe.createFrame(document.body, {
                 showLeaveButton: false,
                 showFullscreenButton: false,
-                iframeStyle: { width: '100%', height: '100%', border: '0' },
-                // Inject the CSS
-                cssText: customCSS
+                iframeStyle: { width: '100%', height: '100%', border: '0', zIndex: 9999 }
             });
 
-            // 3. JOIN
-            await callFrame.join({ 
-                url: roomUrl,
-                showLocalVideo: false,
-                startVideoOff: true,
-                startAudioOff: false,
-                userName: `Display-${mode}`
+            // 2. TRACK ENFORCEMENT LOGIC
+            const enforceMode = (p) => {
+                if (p.local) return; // Ignore self
+
+                // MODE: FACE (Main Display)
+                // Goal: NEVER show screen share. Force Camera.
+                if (mode === 'face') {
+                    // We explicitly subscribe to Audio/Video, but BLOCK ScreenVideo
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: {
+                            audio: true,
+                            video: true,
+                            screenVideo: false, // <--- THE KILL SWITCH
+                            screenAudio: false
+                        }
+                    });
+                    console.log(`[Face Mode] Blocked screen share for ${p.user_name}`);
+                }
+                
+                // MODE: SCREEN (Extended Display)
+                // Goal: Prioritize Screen.
+                // We leave default behavior (Active Speaker), which naturally prioritizes screen.
+                // But we ensure screen is subscribed.
+                if (mode === 'screen' && p.screen) {
+                    callFrame.updateParticipant(p.session_id, {
+                        setSubscribedTracks: {
+                            audio: true,
+                            video: true,
+                            screenVideo: true,
+                            screenAudio: true
+                        }
+                    });
+                }
+            };
+
+            // 3. LISTEN FOR PARTICIPANTS (To apply logic)
+            // When someone joins or updates (starts sharing screen), re-enforce rules
+            callFrame.on('participant-joined', (e) => enforceMode(e.participant));
+            callFrame.on('participant-updated', (e) => {
+                // Only trigger if screen state changed to avoid loops
+                if (e.participant.screen) enforceMode(e.participant);
             });
+
+            // 4. JOIN ROOM
+            try {
+                console.log(`Joining ${roomUrl} in ${mode} mode...`);
+                await callFrame.join({ 
+                    url: roomUrl,
+                    showLocalVideo: false,
+                    startVideoOff: true,
+                    startAudioOff: false,
+                    userName: `Display-${mode.toUpperCase()}`
+                });
+            } catch (e) {
+                showError("Join Failed", e.message);
+            }
         }
 
         window.addEventListener('load', () => setTimeout(init, 500));
