@@ -4,86 +4,54 @@
     <title>ResQ Smart Viewer</title>
     <meta charset="utf-8">
     <style>
-        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #000; overflow: hidden; }
+        /* 1. FORCE IFRAME CONTAINER FULL SCREEN */
+        html, body { 
+            width: 100%; height: 100%; margin: 0; padding: 0; 
+            background: #000; overflow: hidden; 
+        }
+        
+        /* 2. FORCE VIDEO TILES FULL SCREEN (The "Stacking" Trick) */
+        /* This forces every video tile to try and fill the screen. */
+        /* We will use z-index in JS to decide which one wins. */
+        .daily-video-div {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+        }
+
         #debug {
             position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.8);
-            padding: 10px; font-family: monospace; font-size: 16px; z-index: 10000; pointer-events: none; border: 1px solid #0f0;
+            padding: 10px; font-family: monospace; font-size: 16px; z-index: 20000; pointer-events: none; border: 1px solid #0f0;
         }
     </style>
     <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
 </head>
 <body>
-    <div id="debug">Initializing Script...</div>
+    <div id="debug">Initializing...</div>
     
     <script>
         let callFrame = null;
         let loopCount = 0;
         let joinStatus = "Waiting for SDK...";
-        let retryCount = 0;
 
         // 1. SDK CHECK
         const sdkCheck = setInterval(() => {
             if (window.DailyIframe) {
                 clearInterval(sdkCheck);
-                joinStatus = "SDK Loaded. Starting Init...";
                 init();
-            } else {
-                retryCount++;
-                joinStatus = `Waiting for SDK... (${retryCount})`;
-                if (retryCount > 20) joinStatus = "CRITICAL ERROR: SDK Failed to Load";
             }
-            updateDebug();
         }, 500);
 
-        function updateDebug() {
-            const d = document.getElementById('debug');
-            if (!d) return;
-            const mode = new URLSearchParams(window.location.search).get('mode') || 'unknown';
-            
-            let statusText = `Loop: ${loopCount}\nMode: ${mode}\nStatus: ${joinStatus}`;
-            
-            if (callFrame) {
-                try {
-                    const participants = callFrame.participants();
-                    const pList = Object.values(participants);
-                    const remote = pList.filter(p => !p.local);
-                    statusText += `\nRemote Users: ${remote.length}`;
-                    
-                    remote.forEach(p => {
-                        // Display status of what we see vs what they have
-                        statusText += `\n[${p.user_name}] Cam:${p.video} Screen:${p.screen}`;
-                        
-                        // === ROUTING LOGIC ===
-                        if (mode === 'face') {
-                            // FACE MODE: Force Camera ON, Screen OFF
-                            callFrame.updateParticipant(p.session_id, {
-                                setSubscribedTracks: { audio: true, video: true, screenVideo: false }
-                            });
-                        } else if (mode === 'screen') {
-                            // SCREEN MODE: Force Screen ON, Camera OFF
-                            callFrame.updateParticipant(p.session_id, {
-                                setSubscribedTracks: { audio: true, video: false, screenVideo: true }
-                            });
-                        }
-                    });
-                } catch (e) { statusText += `\nErr: ${e.message}`; }
-            }
-            d.innerText = statusText;
-        }
-
-        // 2. LOGIC LOOP
-        setInterval(() => {
-            loopCount++;
-            updateDebug();
-        }, 1000);
-
-        // 3. MAIN INIT
+        // 2. MAIN INIT
         async function init() {
             const params = new URLSearchParams(window.location.search);
             const roomUrl = params.get('roomUrl');
             const mode = params.get('mode') || 'face';
 
-            if (!roomUrl) { joinStatus = "Error: No roomUrl"; return; }
+            if (!roomUrl) { joinStatus = "Error: No roomUrl"; updateDebug(); return; }
 
             // Create Frame
             callFrame = window.DailyIframe.createFrame(document.body, {
@@ -95,8 +63,9 @@
                 }
             });
 
-            // Join
-            joinStatus = "Joining Room...";
+            joinStatus = "Joining...";
+            updateDebug();
+
             try {
                 await callFrame.join({ 
                     url: roomUrl,
@@ -105,20 +74,71 @@
                     startAudioOff: false,
                     userName: `Display-${mode.toUpperCase()}`,
                     
-                    // CRITICAL FIX: Turn off auto-subscriptions so we can manage them manually
-                    subscribeToTracksAutomatically: false, 
-                    
-                    activeSpeakerMode: true,
-                    layoutConfig: {
-                        mode: "active-speaker",
-                        showParticipantsBar: false
-                    }
+                    // KEY CONFIGURATION:
+                    subscribeToTracksAutomatically: true, // 1. Get Video Fast (Fixes Black Screen)
+                    activeSpeakerMode: false // 2. Grid Mode (Renders ALL videos to DOM)
                 });
-                joinStatus = "Joined & Active";
+                joinStatus = "Joined.";
             } catch(e) {
-                joinStatus = `Join Failed: ${e.message}`;
-                console.error(e);
+                joinStatus = `Error: ${e.message}`;
             }
+        }
+
+        // 3. VISUAL STACKING LOOP
+        setInterval(() => {
+            loopCount++;
+            updateDebug();
+            
+            // This loop looks at the actual HTML video elements Daily created
+            // and forces the right one to the top (z-index).
+            const mode = new URLSearchParams(window.location.search).get('mode') || 'face';
+            
+            // Find all video containers
+            // Daily uses classes like "daily-video-div" and specific data attributes
+            const videos = document.querySelectorAll('.daily-video-div');
+            
+            videos.forEach(div => {
+                // Identify what kind of video this is
+                // Daily usually marks screen shares with a class or data attribute
+                // If specific class isn't stable, we check the video element inside?
+                // Let's rely on Daily's standard class: 'daily-screen-share'
+                
+                const isScreen = div.classList.contains('daily-screen-share');
+                const isLocal = div.classList.contains('local'); // Hide self
+                
+                if (isLocal) {
+                    div.style.display = 'none';
+                    return;
+                }
+
+                if (mode === 'face') {
+                    // FACE MODE:
+                    // Camera (Not Screen) -> Z-Index 100 (Top)
+                    // Screen -> Display None
+                    if (isScreen) {
+                        div.style.display = 'none';
+                    } else {
+                        div.style.display = 'block';
+                        div.style.zIndex = '100';
+                    }
+                } else if (mode === 'screen') {
+                    // SCREEN MODE:
+                    // Screen -> Z-Index 100 (Top)
+                    // Camera -> Display None
+                    if (isScreen) {
+                        div.style.display = 'block';
+                        div.style.zIndex = '100';
+                    } else {
+                        div.style.display = 'none';
+                    }
+                }
+            });
+
+        }, 500);
+
+        function updateDebug() {
+            const d = document.getElementById('debug');
+            if (d) d.innerText = `Loop: ${loopCount}\nStatus: ${joinStatus}`;
         }
     </script>
 </body>
