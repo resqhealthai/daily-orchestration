@@ -1,0 +1,172 @@
+-- ============================================================
+-- ResQ Health Training System - CVCH Orchestrator (V3.4 - Final)
+-- ============================================================
+
+-- CONFIGURATION
+property viewerBaseURL : "https://resqhealthai.github.io/daily-orchestration/smart-viewer.html"
+property configURL : "https://raw.githubusercontent.com/resqhealthai/daily-orchestration/main/config.json"
+property logFile : "/Users/Shared/CVCH_Scripts/orchestrator.log"
+
+-- MONITOR DIMENSIONS (Adjust if windows overlap)
+property mon1_W : 1920
+property mon1_H : 1080
+property mon2_W : 2048
+property mon2_Y_Start : -250
+property mon2_H_Forced : 1600
+
+on run
+	try
+		my writeLog("--- STARTING (V3.4 Final) ---")
+		
+		-- 1. SETUP
+		set macMiniName to do shell script "scutil --get ComputerName"
+		set configJSON to do shell script "curl -s --max-time 10 " & quoted form of configURL
+		
+		-- 2. PARSE CONFIG (Using Native AppleScript Logic - Proven to Save)
+		set roomInfo to my parseConfig(configJSON, macMiniName)
+		if roomInfo is missing value then return "ERR: Config Not Found for " & macMiniName
+		
+		set fullRoomURL to roomUrl of roomInfo
+		my writeLog("Target URL: " & fullRoomURL)
+		
+		-- 3. BUILD URLs (Matches V5.0 HTML Logic)
+		set timestamp to do shell script "date +%s"
+		set baseWithCache to viewerBaseURL & "?v=" & timestamp
+		
+		-- Mode 'face' -> Window 1 (Cam/Mic ON, Shows Instructor Face)
+		set faceURL to baseWithCache & "&url=" & fullRoomURL & "&mode=face"
+		
+		-- Mode 'screen' -> Window 2 (Passive, Shows Instructor Screen)
+		set screenURL to baseWithCache & "&url=" & fullRoomURL & "&mode=screen"
+		
+		-- Mode 'ipad' -> Window 3 (No Audio/Video, Shares Reflector Window)
+		set ipadURL to baseWithCache & "&url=" & fullRoomURL & "&mode=ipad"
+		
+		-- 4. CHECK CONNECTION
+		if my isAlreadyConnected() then return "SKIP: Connected"
+		
+		-- 5. LAUNCH SAFARI
+		tell application "Safari"
+			activate
+			try
+				close every window
+			end try
+			delay 1
+			
+			-- WINDOW 1: Instructor Face (Monitor 1)
+			my writeLog(" Creating Window 1 (Face)...")
+			make new document with properties {URL:faceURL}
+			delay 2
+			set bounds of window 1 to {0, 0, mon1_W, mon1_H}
+			my safeToggleUI()
+			
+			-- WINDOW 2: Screen Share (Monitor 2 - Left Half)
+			my writeLog(" Creating Window 2 (Screen)...")
+			make new document with properties {URL:screenURL}
+			delay 2
+			
+			-- Calculate split for Monitor 2
+			set w2_Left to mon1_W
+			set w2_Top to mon2_Y_Start
+			set w2_Right to (mon1_W + (mon2_W / 2))
+			set w2_Bottom to mon2_H_Forced
+			
+			set bounds of window 1 to {w2_Left, w2_Top, w2_Right, w2_Bottom}
+			my safeToggleUI()
+		end tell
+		
+		-- WINDOW 3: iPad / Reflector (Monitor 2 - Right Half)
+		tell application "System Events"
+			set reflectorRunning to (exists (process "Reflector 4"))
+		end tell
+		
+		if reflectorRunning then
+			my writeLog(" Creating Window 3 (iPad)...")
+			tell application "Safari"
+				make new document with properties {URL:ipadURL}
+				delay 2
+				-- Bounds for second half of Monitor 2
+				set w3_Left to (mon1_W + (mon2_W / 2))
+				set w3_Top to mon2_Y_Start
+				set w3_Right to (mon1_W + mon2_W)
+				set w3_Bottom to mon2_H_Forced
+				
+				set bounds of window 1 to {w3_Left, w3_Top, w3_Right, w3_Bottom}
+				my safeToggleUI()
+			end tell
+		else
+			my writeLog(" SKIP: Reflector 4 Not Found.")
+		end if
+		
+		return "SUCCESS"
+		
+	on error errMsg
+		my writeLog("CRASH: " & errMsg)
+		return "CRASH: " & errMsg
+	end try
+end run
+
+-- ============================================================
+-- HELPERS (Proven Native Logic)
+-- ============================================================
+
+on safeToggleUI()
+	try
+		tell application "System Events"
+			tell process "Safari"
+				if exists (menu item "Hide Toolbar" of menu "View" of menu bar 1) then
+					click menu item "Hide Toolbar" of menu "View" of menu bar 1
+				end if
+				if exists (menu item "Hide Favorites Bar" of menu "View" of menu bar 1) then
+					click menu item "Hide Favorites Bar" of menu "View" of menu bar 1
+				end if
+			end tell
+		end tell
+	end try
+end safeToggleUI
+
+on writeLog(msg)
+	try
+		do shell script "echo $(date '+%H:%M:%S') \" " & msg & "\" >> " & quoted form of logFile
+	end try
+end writeLog
+
+on isAlreadyConnected()
+	tell application "Safari"
+		if not running then return false
+		repeat with w in windows
+			repeat with t in tabs of w
+				if (URL of t) contains "smart-viewer" then return true
+			end repeat
+		end repeat
+	end tell
+	return false
+end isAlreadyConnected
+
+on parseConfig(json, macName)
+	set searchKey to "\"" & macName & "\":"
+	if json does not contain searchKey then
+		-- Fallback to lowercase check
+		set macLower to do shell script "echo " & quoted form of macName & " | tr '[:upper:]' '[:lower:]'"
+		set searchKey to "\"" & macLower & "\":"
+		if json does not contain searchKey then return missing value
+	end if
+	
+	set AppleScript's text item delimiters to searchKey
+	set temp to text item 2 of json
+	set AppleScript's text item delimiters to "}"
+	set macObject to text item 1 of temp
+	
+	set roomUrl to my extractValue(macObject, "roomUrl")
+	if roomUrl is "" then return missing value
+	return {roomUrl:roomUrl}
+end parseConfig
+
+on extractValue(jsonFragment, keyName)
+	set searchKey to "\"" & keyName & "\": \""
+	if jsonFragment does not contain searchKey then return ""
+	set AppleScript's text item delimiters to searchKey
+	set temp to text item 2 of jsonFragment
+	set AppleScript's text item delimiters to "\""
+	return text item 1 of temp
+end extractValue
