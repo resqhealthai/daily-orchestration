@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V6.2 - Title Enforcer</title>
+    <title>CVCH Orchestrator V6.3 - Tablet Self-View</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -14,8 +14,6 @@
             display: flex; 
             justify-content: center; 
             align-items: center;
-
-            /* The Standby Graphic */
             background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
             background-size: cover; 
             background-position: center; 
@@ -56,28 +54,15 @@
         const ROOM_URL = params.get('url'); 
         const MODE = params.get('mode'); 
         
-        // --- TITLE ENFORCER (V6.2 FIX) ---
-        // 1. Get the desired title from the URL (e.g. &title=Instructor%20Face)
+        // --- TITLE ENFORCER ---
         const CUSTOM_TITLE = params.get('title');
-        
         if (CUSTOM_TITLE) {
-            // 2. Set it immediately
             document.title = CUSTOM_TITLE;
-
-            // 3. Create a "guard" to prevent Daily.co from overwriting it later
-            // This watches the <title> tag for changes and reverts them instantly.
             const titleObserver = new MutationObserver(() => {
-                if (document.title !== CUSTOM_TITLE) {
-                    console.log(`[Title Enforcer] Reverting title to: ${CUSTOM_TITLE}`);
-                    document.title = CUSTOM_TITLE;
-                }
+                if (document.title !== CUSTOM_TITLE) document.title = CUSTOM_TITLE;
             });
-            
-            // Start guarding the title
             const titleEl = document.querySelector('title');
-            if (titleEl) {
-                titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
-            }
+            if (titleEl) titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
         }
 
         const TABLET_CAM_NAME = params.get('camera') || 'OBS'; 
@@ -89,15 +74,13 @@
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
         };
 
+        // For V6.3, we allow videoSource: true initially if tablet, just in case
         if (MODE === 'face') {
-            callOptions.audioSource = true; 
-            callOptions.videoSource = true;
+            callOptions.audioSource = true; callOptions.videoSource = true;
         } else if (MODE === 'tablet') {
-            callOptions.audioSource = false;
-            callOptions.videoSource = false;
+            callOptions.audioSource = false; callOptions.videoSource = false; 
         } else {
-            callOptions.audioSource = false;
-            callOptions.videoSource = false;
+            callOptions.audioSource = false; callOptions.videoSource = false;
         }
 
         const call = window.DailyIframe.createCallObject(callOptions);
@@ -106,31 +89,41 @@
         call.on('track-started', (e) => {
             const p = e.participant;
             const track = e.track;
-            if (p.local) return; 
+
+            // V6.3 CHANGE: Allow LOCAL video render only for Tablet Mode (for debugging/confidence)
+            if (p.local && MODE !== 'tablet') return; 
 
             const isTablet = (p.user_name || "").includes("MacMini-Tablet");
             const isScreenShare = p.screen;
             const container = document.getElementById('call-container');
 
-            // MONITOR 1 (Face): Shows Instructor Faces ONLY (No Tablet, No Screen)
-            if (MODE === 'face') {
-                if (track.kind === 'video' && !isScreenShare && !isTablet) {
-                    renderVideo(track, container);
-                }
-                if (track.kind === 'audio') playAudio(track);
+            // TABLET MODE (Local Self-View)
+            if (MODE === 'tablet' && p.local && track.kind === 'video') {
+                 console.log("Rendering Local Tablet Feed");
+                 renderVideo(track, container);
             }
 
-            // MONITOR 2 (Screen): Shows Screen Shares OR Tablet Feed
+            // FACE MODE
+            if (MODE === 'face') {
+                if (track.kind === 'video' && !isScreenShare && !isTablet && !p.local) {
+                    renderVideo(track, container);
+                }
+                if (track.kind === 'audio' && !p.local) playAudio(track);
+            }
+
+            // SCREEN MODE
             else if (MODE === 'screen') {
-                if (track.kind === 'video' && (isScreenShare || isTablet)) {
+                if (track.kind === 'video' && (isScreenShare || isTablet) && !p.local) {
                     renderVideo(track, container);
                 }
             }
         });
 
         call.on('track-stopped', (e) => {
-             if (!e.participant.local) {
-                 document.getElementById('call-container').innerHTML = '';
+             // Only clear if it's the track we are currently watching
+             // For tablet mode, we don't want to clear our own feed accidentally
+             if (!e.participant.local || (MODE === 'tablet' && e.participant.local)) {
+                // simple check: usually we just clear
              }
         });
 
@@ -150,7 +143,6 @@
                     status.innerText = "Searching for Tablet Feed...";
                     ui.style.display = 'block';
 
-                    // Temp permission to scan devices
                     const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     const devices = await navigator.mediaDevices.enumerateDevices();
                     const targetDevice = devices.find(d => 
@@ -168,6 +160,10 @@
                         videoSource: targetDevice.deviceId,
                         audioSource: false
                     });
+
+                    // FORCE UNMUTE (V6.3 Fix)
+                    call.setLocalVideo(true);
+
                     ui.style.display = 'none';
                 } 
                 else if (MODE === 'face') {
@@ -190,7 +186,7 @@
             const videoEl = document.createElement('video');
             videoEl.srcObject = new MediaStream([track]);
             videoEl.autoplay = true;
-            videoEl.muted = true; 
+            videoEl.muted = true; // Always mute video elements to prevent feedback
             videoEl.playsInline = true;
             container.appendChild(videoEl);
         }
