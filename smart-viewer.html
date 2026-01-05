@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V6.3 - Tablet Self-View</title>
+    <title>CVCH Orchestrator V6.5 - Passive Smart Viewer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -54,6 +54,12 @@
         const ROOM_URL = params.get('url'); 
         const MODE = params.get('mode'); 
         
+        // --- FLAGS: Check for "Passive" Instructions from AppleScript ---
+        // If AppleScript sends &video=false, strictPassive becomes true
+        const PARAM_VIDEO = params.get('video');
+        const PARAM_AUDIO = params.get('audio');
+        const IS_PASSIVE = (PARAM_VIDEO === 'false') || (MODE === 'screen');
+
         // --- TITLE ENFORCER ---
         const CUSTOM_TITLE = params.get('title');
         if (CUSTOM_TITLE) {
@@ -70,40 +76,48 @@
         // --- 1. CONFIGURE CALL ---
         let callOptions = {
             url: ROOM_URL,
-            subscribeToTracksAutomatically: false,
+            subscribeToTracksAutomatically: false, // We manually subscribe based on mode
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
         };
 
-        // For V6.3, we allow videoSource: true initially if tablet, just in case
+        // INITIAL CONFIGURATION BASED ON MODE
         if (MODE === 'face') {
-            callOptions.audioSource = true; callOptions.videoSource = true;
+            // Instructor Face: Needs Camera + Mic
+            callOptions.audioSource = true; 
+            callOptions.videoSource = true;
         } else if (MODE === 'tablet') {
-            callOptions.audioSource = false; callOptions.videoSource = false; 
+            // Tablet: Needs Camera (OBS), No Mic
+            callOptions.audioSource = false; 
+            callOptions.videoSource = true; 
         } else {
-            callOptions.audioSource = false; callOptions.videoSource = false;
+            // Screen (Passive): NEEDS NOTHING
+            // This prevents the "MacMini-ScreenDisp" track from ever starting
+            callOptions.audioSource = false; 
+            callOptions.videoSource = false;
         }
 
         const call = window.DailyIframe.createCallObject(callOptions);
 
-        // --- 2. REMOTE VIDEO LOGIC ---
+        // --- 2. REMOTE VIDEO LOGIC (What do we display?) ---
         call.on('track-started', (e) => {
             const p = e.participant;
             const track = e.track;
 
-            // V6.3 CHANGE: Allow LOCAL video render only for Tablet Mode (for debugging/confidence)
+            // Allow LOCAL video render ONLY for Tablet Mode (for confidence check)
             if (p.local && MODE !== 'tablet') return; 
 
             const isTablet = (p.user_name || "").includes("MacMini-Tablet");
             const isScreenShare = p.screen;
             const container = document.getElementById('call-container');
 
-            // TABLET MODE (Local Self-View)
+            // A. TABLET MODE (Show Local Feed)
             if (MODE === 'tablet' && p.local && track.kind === 'video') {
                  console.log("Rendering Local Tablet Feed");
                  renderVideo(track, container);
             }
 
-            // FACE MODE
+            // B. FACE MODE (Monitor 1: Show Instructor Face)
+            // Logic: Show remote video that is NOT a screen share and NOT the tablet
             if (MODE === 'face') {
                 if (track.kind === 'video' && !isScreenShare && !isTablet && !p.local) {
                     renderVideo(track, container);
@@ -111,20 +125,17 @@
                 if (track.kind === 'audio' && !p.local) playAudio(track);
             }
 
-            // SCREEN MODE
+            // C. SCREEN MODE (Monitor 2: Show Instructor Desktop)
+            // Logic: Show remote video ONLY if it IS a screen share
             else if (MODE === 'screen') {
-                if (track.kind === 'video' && (isScreenShare || isTablet) && !p.local) {
+                if (track.kind === 'video' && isScreenShare && !p.local) {
                     renderVideo(track, container);
                 }
             }
         });
 
         call.on('track-stopped', (e) => {
-             // Only clear if it's the track we are currently watching
-             // For tablet mode, we don't want to clear our own feed accidentally
-             if (!e.participant.local || (MODE === 'tablet' && e.participant.local)) {
-                // simple check: usually we just clear
-             }
+             // Optional cleanup
         });
 
         // --- 3. STARTUP LOGIC ---
@@ -139,10 +150,12 @@
             }
 
             try {
+                // --- CASE 1: TABLET (Active Uplink) ---
                 if (MODE === 'tablet') {
                     status.innerText = "Searching for Tablet Feed...";
                     ui.style.display = 'block';
 
+                    // Device Enumeration for OBS/Capture Card
                     const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     const devices = await navigator.mediaDevices.enumerateDevices();
                     const targetDevice = devices.find(d => 
@@ -161,16 +174,32 @@
                         audioSource: false
                     });
 
-                    // FORCE UNMUTE (V6.3 Fix)
+                    // Force unmute local video so we can see it
                     call.setLocalVideo(true);
-
                     ui.style.display = 'none';
                 } 
+                
+                // --- CASE 2: FACE (Active Participant) ---
                 else if (MODE === 'face') {
-                    await call.join({ userName: 'MacMini-Classroom' });
+                    await call.join({ 
+                        userName: 'MacMini-Classroom',
+                        videoSource: true,
+                        audioSource: true
+                    });
+                    // Subscribe to everything by default, then filter in 'track-started'
+                    call.updateParticipant('*', { setSubscribedTracks: true });
                 }
+                
+                // --- CASE 3: SCREEN (Passive Viewer) ---
                 else {
-                    await call.join({ userName: 'MacMini-ScreenDisp' });
+                    // Monitor 2 Logic: Join as 'MacMini-ScreenDisp' but SEND NOTHING.
+                    await call.join({ 
+                        userName: 'MacMini-ScreenDisp',
+                        videoSource: false, // Strict: No Video
+                        audioSource: false  // Strict: No Audio
+                    });
+                    
+                    // We must manually subscribe to tracks to SEE them
                     call.updateParticipant('*', { setSubscribedTracks: true });
                 }
 
@@ -181,12 +210,13 @@
             }
         }
 
+        // --- HELPERS ---
         function renderVideo(track, container) {
             container.innerHTML = ''; 
             const videoEl = document.createElement('video');
             videoEl.srcObject = new MediaStream([track]);
             videoEl.autoplay = true;
-            videoEl.muted = true; // Always mute video elements to prevent feedback
+            videoEl.muted = true; // Prevent audio feedback loops
             videoEl.playsInline = true;
             container.appendChild(videoEl);
         }
