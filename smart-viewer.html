@@ -2,13 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Smart Viewer V4.0</title>
+    <title>CVCH Orchestrator V5.0</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        /* 1. VISUAL SETUP & STANDBY GRAPHIC */
+        /* --- 1. VISUALS & GRAPHIC --- */
         body { 
-            margin: 0; 
-            padding: 0; 
+            margin: 0; padding: 0; 
             overflow: hidden; 
             height: 100vh; 
             background-color: #000;
@@ -16,149 +15,189 @@
             justify-content: center; 
             align-items: center;
 
-            /* RESTORED: The Standby Graphic */
-            background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=Awaiting+ResQ+Health+Instructor'); 
+            /* The Standby Graphic (Visible when no video is playing) */
+            background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
             background-size: cover; 
             background-position: center; 
             background-repeat: no-repeat;
         }
 
-        /* 2. VIDEO ELEMENT (Covers the graphic when active) */
+        /* --- 2. VIDEO LAYOUT --- */
+        /* Z-Index 10 ensures video covers the graphic when active */
         video { 
-            width: 100%; 
-            height: 100%; 
+            width: 100%; height: 100%; 
             object-fit: contain; 
             position: absolute; 
             z-index: 10; 
-            background: #000; /* Solid black background for the video itself */
+            background: #000; 
         }
 
-        /* 3. IPAD MODE UI */
-        #ipad-ui {
+        /* --- 3. UI FOR IPAD / PERMISSIONS --- */
+        /* Only visible if we need to click something (Window 3 only) */
+        #ui-layer {
             z-index: 20;
+            position: relative;
             text-align: center;
             color: white;
-            font-family: sans-serif;
-            background: rgba(0,0,0,0.7);
-            padding: 2rem;
-            border-radius: 10px;
-            display: none; /* Hidden by default */
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
         }
-        button { font-size: 20px; padding: 10px 20px; cursor: pointer; margin-top: 15px; }
+        button { font-size: 18px; padding: 10px 20px; cursor: pointer; margin-top: 10px; }
     </style>
 </head>
 <body>
     <div id="call-container"></div>
     
-    <div id="ipad-ui">
-        <h2>iPad Broadcast Mode</h2>
-        <p>Click below to select the <strong>Reflector 4</strong> window.</p>
-        <button id="shareBtn">Start Sharing</button>
+    <div id="ui-layer">
+        <h2 id="status-text">Initializing...</h2>
+        <button id="action-btn" style="display:none">Action</button>
     </div>
 
     <script>
-        // --- CONFIGURATION ---
         const params = new URLSearchParams(window.location.search);
         const ROOM_URL = params.get('url'); 
         const MODE = params.get('mode'); // 'face', 'screen', or 'ipad'
 
-        if (!ROOM_URL) document.body.innerHTML = "<h1 style='color:red'>ERR: No URL</h1>";
-
-        // --- 1. SETUP CALL OBJECT (HEADLESS) ---
-        const call = window.DailyIframe.createCallObject({
-            subscribeToTracksAutomatically: false, // We will manually subscribe based on Mode
+        // --- 1. CONFIGURE THE LOCAL MAC MINI ---
+        // We configure the hardware access based on which Window we are in.
+        let callOptions = {
+            url: ROOM_URL,
+            subscribeToTracksAutomatically: false, // Manual control
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-        });
-
-        // --- 2. PARTICIPANT FILTERING (The "Old Code" Logic) ---
-        // Prevents windows from subscribing to each other or the iPad
-        const isSafeParticipant = (p) => {
-            if (p.local) return false;
-            const name = (p.user_name || "").toLowerCase();
-            // Ignore other orchestrator windows to prevent loops
-            if (name.includes("macmini") || name.includes("ipad")) return false; 
-            return true;
         };
 
-        // --- 3. TRACK HANDLING ---
+        if (MODE === 'face') {
+            // WINDOW 1: Behaves as the "Room Host"
+            // Enable Mic & Cam so the Instructor can see/hear the classroom immediately
+            callOptions.audioSource = true; 
+            callOptions.videoSource = true;
+        } else if (MODE === 'ipad') {
+            // WINDOW 3: iPad Uplink
+            // No Mic/Cam, we only want to Screen Share
+            callOptions.audioSource = false;
+            callOptions.videoSource = false;
+        } else {
+            // WINDOW 2: Passive Screen Viewer
+            callOptions.audioSource = false;
+            callOptions.videoSource = false;
+        }
+
+        const call = window.DailyIframe.createCallObject(callOptions);
+
+        // --- 2. LOGIC FOR DISPLAYING REMOTE VIDEO ---
         call.on('track-started', (e) => {
             const p = e.participant;
-            if (!isSafeParticipant(p)) return;
-
             const track = e.track;
+
+            // SAFETY: Don't show our own cameras or the iPad loopback
+            // This ensures Window 1 and 2 don't show the iPad screen
+            if (p.local) return; 
+            if ((p.user_name || "").includes("MacMini")) return; 
+
             const isScreenShare = p.screen;
             const container = document.getElementById('call-container');
 
-            // --- MODE: FACE (Window 1) ---
-            // Shows: Camera Video
-            // Plays: ALL Audio (Mic + System Audio from screen share)
+            // --- MONITOR 1 LOGIC (Face) ---
             if (MODE === 'face') {
-                // Video Logic: Only show if it's a Camera (not screen)
+                // Show Video IF: It is a Camera (not a screen share)
                 if (track.kind === 'video' && !isScreenShare) {
                     renderVideo(track, container);
                 }
-                // Audio Logic: Play everything (Mic + YouTube audio etc)
+                // Play Audio IF: It is any audio (Instructor Mic or their PC Sound)
                 if (track.kind === 'audio') {
                     playAudio(track);
                 }
             }
 
-            // --- MODE: SCREEN (Window 2) ---
-            // Shows: Screen Share Video
-            // Plays: NOTHING (Silence to prevent echo)
+            // --- MONITOR 2 LOGIC (Screen) ---
             else if (MODE === 'screen') {
+                // Show Video IF: It IS a screen share
                 if (track.kind === 'video' && isScreenShare) {
                     renderVideo(track, container);
                 }
-                // Audio is ignored entirely here
             }
         });
 
-        call.on('track-stopped', () => {
-            // When track stops, clear container so Background Graphic reappears
-            document.getElementById('call-container').innerHTML = '';
+        // --- 3. HANDLE INSTRUCTOR TURNING OFF CAM/SCREEN ---
+        call.on('track-stopped', (e) => {
+             // If the track stops, we clear the container.
+             // This reveals the underlying 'background-image' (The Standby Graphic)
+             if (!e.participant.local) {
+                 document.getElementById('call-container').innerHTML = '';
+             }
         });
 
-        // --- 4. HELPERS ---
+        // --- 4. STARTUP & PERMISSION HANDLING ---
+        async function start() {
+            const ui = document.getElementById('ui-layer');
+            const btn = document.getElementById('action-btn');
+            const status = document.getElementById('status-text');
+
+            if (!ROOM_URL) {
+                status.innerText = "ERR: No URL Provided";
+                ui.style.display = 'block';
+                return;
+            }
+
+            try {
+                // WINDOW 3: iPad Auto-Setup
+                if (MODE === 'ipad') {
+                    ui.style.display = 'block';
+                    status.innerText = "iPad Uplink Mode";
+                    // Join as MacMini-iPad so other windows know to ignore this feed
+                    await call.join({ userName: 'MacMini-iPad' });
+                    
+                    // Setup button to trigger the Reflector share
+                    btn.innerText = "Select Reflector Window";
+                    btn.style.display = 'inline-block';
+                    btn.onclick = async () => {
+                        try {
+                            await call.startScreenShare({ displaySurface: 'window' });
+                            ui.style.display = 'none'; // Hide UI after success
+                        } catch (err) {
+                            status.innerText = "Share Failed: " + err.message;
+                        }
+                    };
+                } 
+                
+                // WINDOW 1: Camera/Mic Setup (Always On)
+                else if (MODE === 'face') {
+                    // Browser will prompt for permissions here once
+                    await call.join({ userName: 'MacMini-Classroom' });
+                }
+
+                // WINDOW 2: Passive
+                else {
+                    await call.join({ userName: 'MacMini-ScreenDisp' });
+                    // Subscribe to everything so we can catch the 'track-started' events
+                    call.updateParticipant('*', { setSubscribedTracks: true });
+                }
+
+            } catch (err) {
+                ui.style.display = 'block';
+                status.innerText = "Error: " + err.message;
+            }
+        }
+
+        // --- HELPERS ---
         function renderVideo(track, container) {
-            container.innerHTML = ''; // Ensure clean slate
+            container.innerHTML = ''; 
             const videoEl = document.createElement('video');
             videoEl.srcObject = new MediaStream([track]);
             videoEl.autoplay = true;
-            videoEl.muted = true; // Video tracks muted (Audio handled separately if needed)
+            videoEl.muted = true; // Video tracks muted (Audio handled separately)
             videoEl.playsInline = true;
             container.appendChild(videoEl);
         }
 
         function playAudio(track) {
+            // Create invisible audio element
             const audioEl = document.createElement('audio');
             audioEl.srcObject = new MediaStream([track]);
             audioEl.autoplay = true;
             document.body.appendChild(audioEl);
-        }
-
-        // --- 5. INITIALIZATION & IPAD LOGIC ---
-        async function start() {
-            try {
-                // IPAD MODE
-                if (MODE === 'ipad') {
-                    document.getElementById('ipad-ui').style.display = 'block';
-                    await call.join({ url: ROOM_URL, audioSource: false, videoSource: false });
-                    
-                    document.getElementById('shareBtn').onclick = async () => {
-                        await call.startScreenShare({ displaySurface: 'window' }); // Select Reflector
-                        document.getElementById('ipad-ui').style.display = 'none';
-                    };
-                } 
-                // VIEWER MODES
-                else {
-                    await call.join({ url: ROOM_URL, audioSource: false, videoSource: false });
-                    // Subscribe to everything; 'track-started' will decide what to render
-                    call.updateParticipant('*', { setSubscribedTracks: true });
-                }
-            } catch (err) {
-                console.error("Join failed", err);
-            }
         }
 
         start();
