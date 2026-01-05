@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V5.0</title>
+    <title>CVCH Orchestrator V6.0 - Android Tablet Edition</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -32,8 +32,7 @@
             background: #000; 
         }
 
-        /* --- 3. UI FOR IPAD / PERMISSIONS --- */
-        /* Only visible if we need to click something (Window 3 only) */
+        /* --- 3. UI LAYER (Errors/Status) --- */
         #ui-layer {
             z-index: 20;
             position: relative;
@@ -43,8 +42,8 @@
             padding: 20px;
             border-radius: 8px;
             display: none;
+            font-family: sans-serif;
         }
-        button { font-size: 18px; padding: 10px 20px; cursor: pointer; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -52,34 +51,36 @@
     
     <div id="ui-layer">
         <h2 id="status-text">Initializing...</h2>
-        <button id="action-btn" style="display:none">Action</button>
     </div>
 
     <script>
         const params = new URLSearchParams(window.location.search);
         const ROOM_URL = params.get('url'); 
-        const MODE = params.get('mode'); // 'face', 'screen', or 'ipad'
+        const MODE = params.get('mode'); // 'face', 'screen', or 'tablet'
+        
+        // Allow overriding the target device name via URL (default to OBS)
+        // usage: &camera=OBS%20Virtual%20Camera
+        const TABLET_CAM_NAME = params.get('camera') || 'OBS'; 
 
-        // --- 1. CONFIGURE THE LOCAL MAC MINI ---
-        // We configure the hardware access based on which Window we are in.
+        // --- 1. CONFIGURE THE CALL OBJECT ---
         let callOptions = {
             url: ROOM_URL,
-            subscribeToTracksAutomatically: false, // Manual control
+            subscribeToTracksAutomatically: false, // Manual control for efficiency
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
         };
 
+        // Pre-configure input sources based on MODE to avoid permission prompts on passive windows
         if (MODE === 'face') {
-            // WINDOW 1: Behaves as the "Room Host"
-            // Enable Mic & Cam so the Instructor can see/hear the classroom immediately
+            // WINDOW 1: Instructor Face -> Standard WebCam
             callOptions.audioSource = true; 
             callOptions.videoSource = true;
-        } else if (MODE === 'ipad') {
-            // WINDOW 3: iPad Uplink
-            // No Mic/Cam, we only want to Screen Share
+        } else if (MODE === 'tablet') {
+            // WINDOW 3: Tablet Uplink -> Specific OSB Camera (handled in start())
+            // We set these to false initially, then override in join()
             callOptions.audioSource = false;
             callOptions.videoSource = false;
         } else {
-            // WINDOW 2: Passive Screen Viewer
+            // WINDOW 2: Passive Screen Viewer -> No Inputs
             callOptions.audioSource = false;
             callOptions.videoSource = false;
         }
@@ -91,48 +92,48 @@
             const p = e.participant;
             const track = e.track;
 
-            // SAFETY: Don't show our own cameras or the iPad loopback
-            // This ensures Window 1 and 2 don't show the iPad screen
             if (p.local) return; 
-            if ((p.user_name || "").includes("MacMini")) return; 
 
+            // Identify if this participant is the Tablet Feed
+            const isTablet = (p.user_name || "").includes("MacMini-Tablet");
             const isScreenShare = p.screen;
+            
             const container = document.getElementById('call-container');
 
             // --- MONITOR 1 LOGIC (Face) ---
+            // Shows: Instructor Faces ONLY
+            // Ignores: Screen Shares AND The Tablet Feed
             if (MODE === 'face') {
-                // Show Video IF: It is a Camera (not a screen share)
-                if (track.kind === 'video' && !isScreenShare) {
+                if (track.kind === 'video' && !isScreenShare && !isTablet) {
                     renderVideo(track, container);
                 }
-                // Play Audio IF: It is any audio (Instructor Mic or their PC Sound)
+                // Play Audio IF: It is audio (Instructor Mic or their PC Sound)
                 if (track.kind === 'audio') {
                     playAudio(track);
                 }
             }
 
             // --- MONITOR 2 LOGIC (Screen) ---
+            // Shows: Real Screen Shares OR The Tablet Feed
+            // This treats the Tablet Camera as if it were a Screen Share
             else if (MODE === 'screen') {
-                // Show Video IF: It IS a screen share
-                if (track.kind === 'video' && isScreenShare) {
+                if (track.kind === 'video' && (isScreenShare || isTablet)) {
                     renderVideo(track, container);
                 }
             }
         });
 
-        // --- 3. HANDLE INSTRUCTOR TURNING OFF CAM/SCREEN ---
+        // --- 3. HANDLE STOPPED TRACKS ---
         call.on('track-stopped', (e) => {
-             // If the track stops, we clear the container.
-             // This reveals the underlying 'background-image' (The Standby Graphic)
+             // If the track stops, clear container to reveal the background logo
              if (!e.participant.local) {
                  document.getElementById('call-container').innerHTML = '';
              }
         });
 
-        // --- 4. STARTUP & PERMISSION HANDLING ---
+        // --- 4. STARTUP LOGIC ---
         async function start() {
             const ui = document.getElementById('ui-layer');
-            const btn = document.getElementById('action-btn');
             const status = document.getElementById('status-text');
 
             if (!ROOM_URL) {
@@ -142,42 +143,57 @@
             }
 
             try {
-                // WINDOW 3: iPad Auto-Setup
-                if (MODE === 'ipad') {
+                // === TABLET UPLINK MODE (Hidden Window) ===
+                if (MODE === 'tablet') {
+                    status.innerText = "Searching for Tablet Feed...";
                     ui.style.display = 'block';
-                    status.innerText = "iPad Uplink Mode";
-                    // Join as MacMini-iPad so other windows know to ignore this feed
-                    await call.join({ userName: 'MacMini-iPad' });
+
+                    // 1. Request Permission temporarily to enumerate labels
+                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     
-                    // Setup button to trigger the Reflector share
-                    btn.innerText = "Select Reflector Window";
-                    btn.style.display = 'inline-block';
-                    btn.onclick = async () => {
-                        try {
-                            await call.startScreenShare({ displaySurface: 'window' });
-                            ui.style.display = 'none'; // Hide UI after success
-                        } catch (err) {
-                            status.innerText = "Share Failed: " + err.message;
-                        }
-                    };
+                    // 2. Find the OBS/OSB Camera
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const targetDevice = devices.find(d => 
+                        d.kind === 'videoinput' && 
+                        d.label.toLowerCase().includes(TABLET_CAM_NAME.toLowerCase())
+                    );
+                    
+                    // 3. Clean up temp stream
+                    tempStream.getTracks().forEach(t => t.stop());
+
+                    if (!targetDevice) {
+                        throw new Error(`Device containing '${TABLET_CAM_NAME}' not found.`);
+                    }
+
+                    status.innerText = `Linking: ${targetDevice.label}`;
+                    
+                    // 4. Join using the specific Device ID
+                    await call.join({ 
+                        userName: 'MacMini-Tablet',
+                        videoSource: targetDevice.deviceId,
+                        audioSource: false // Tablet audio usually handled via PC audio or ignored
+                    });
+                    
+                    // Success: Hide UI (even though window is hidden, good practice)
+                    ui.style.display = 'none';
                 } 
                 
-                // WINDOW 1: Camera/Mic Setup (Always On)
+                // === FACE MODE (Instructor) ===
                 else if (MODE === 'face') {
-                    // Browser will prompt for permissions here once
                     await call.join({ userName: 'MacMini-Classroom' });
                 }
 
-                // WINDOW 2: Passive
+                // === SCREEN MODE (Passive Viewer) ===
                 else {
                     await call.join({ userName: 'MacMini-ScreenDisp' });
-                    // Subscribe to everything so we can catch the 'track-started' events
+                    // Subscribe to everything to ensure we catch the Tablet feed
                     call.updateParticipant('*', { setSubscribedTracks: true });
                 }
 
             } catch (err) {
                 ui.style.display = 'block';
                 status.innerText = "Error: " + err.message;
+                console.error(err);
             }
         }
 
@@ -187,13 +203,12 @@
             const videoEl = document.createElement('video');
             videoEl.srcObject = new MediaStream([track]);
             videoEl.autoplay = true;
-            videoEl.muted = true; // Video tracks muted (Audio handled separately)
+            videoEl.muted = true; 
             videoEl.playsInline = true;
             container.appendChild(videoEl);
         }
 
         function playAudio(track) {
-            // Create invisible audio element
             const audioEl = document.createElement('audio');
             audioEl.srcObject = new MediaStream([track]);
             audioEl.autoplay = true;
