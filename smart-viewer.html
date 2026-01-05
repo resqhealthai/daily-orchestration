@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V6.0 - Android Tablet Edition</title>
+    <title>CVCH Orchestrator V6.1 - Dynamic Titles</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -58,164 +58,16 @@
         const ROOM_URL = params.get('url'); 
         const MODE = params.get('mode'); // 'face', 'screen', or 'tablet'
         
+        // --- DYNAMIC TITLE LOGIC (NEW V6.1) ---
+        // This fixes the race condition where the default title overwrites the AppleScript's name.
+        // If a custom title is passed in the URL (e.g. &title=Instructor%20Face), apply it immediately.
+        const CUSTOM_TITLE = params.get('title');
+        if (CUSTOM_TITLE) {
+            document.title = CUSTOM_TITLE;
+        }
+
         // Allow overriding the target device name via URL (default to OBS)
         // usage: &camera=OBS%20Virtual%20Camera
         const TABLET_CAM_NAME = params.get('camera') || 'OBS'; 
 
-        // --- 1. CONFIGURE THE CALL OBJECT ---
-        let callOptions = {
-            url: ROOM_URL,
-            subscribeToTracksAutomatically: false, // Manual control for efficiency
-            dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-        };
-
-        // Pre-configure input sources based on MODE to avoid permission prompts on passive windows
-        if (MODE === 'face') {
-            // WINDOW 1: Instructor Face -> Standard WebCam
-            callOptions.audioSource = true; 
-            callOptions.videoSource = true;
-        } else if (MODE === 'tablet') {
-            // WINDOW 3: Tablet Uplink -> Specific OSB Camera (handled in start())
-            // We set these to false initially, then override in join()
-            callOptions.audioSource = false;
-            callOptions.videoSource = false;
-        } else {
-            // WINDOW 2: Passive Screen Viewer -> No Inputs
-            callOptions.audioSource = false;
-            callOptions.videoSource = false;
-        }
-
-        const call = window.DailyIframe.createCallObject(callOptions);
-
-        // --- 2. LOGIC FOR DISPLAYING REMOTE VIDEO ---
-        call.on('track-started', (e) => {
-            const p = e.participant;
-            const track = e.track;
-
-            if (p.local) return; 
-
-            // Identify if this participant is the Tablet Feed
-            const isTablet = (p.user_name || "").includes("MacMini-Tablet");
-            const isScreenShare = p.screen;
-            
-            const container = document.getElementById('call-container');
-
-            // --- MONITOR 1 LOGIC (Face) ---
-            // Shows: Instructor Faces ONLY
-            // Ignores: Screen Shares AND The Tablet Feed
-            if (MODE === 'face') {
-                if (track.kind === 'video' && !isScreenShare && !isTablet) {
-                    renderVideo(track, container);
-                }
-                // Play Audio IF: It is audio (Instructor Mic or their PC Sound)
-                if (track.kind === 'audio') {
-                    playAudio(track);
-                }
-            }
-
-            // --- MONITOR 2 LOGIC (Screen) ---
-            // Shows: Real Screen Shares OR The Tablet Feed
-            // This treats the Tablet Camera as if it were a Screen Share
-            else if (MODE === 'screen') {
-                if (track.kind === 'video' && (isScreenShare || isTablet)) {
-                    renderVideo(track, container);
-                }
-            }
-        });
-
-        // --- 3. HANDLE STOPPED TRACKS ---
-        call.on('track-stopped', (e) => {
-             // If the track stops, clear container to reveal the background logo
-             if (!e.participant.local) {
-                 document.getElementById('call-container').innerHTML = '';
-             }
-        });
-
-        // --- 4. STARTUP LOGIC ---
-        async function start() {
-            const ui = document.getElementById('ui-layer');
-            const status = document.getElementById('status-text');
-
-            if (!ROOM_URL) {
-                status.innerText = "ERR: No URL Provided";
-                ui.style.display = 'block';
-                return;
-            }
-
-            try {
-                // === TABLET UPLINK MODE (Hidden Window) ===
-                if (MODE === 'tablet') {
-                    status.innerText = "Searching for Tablet Feed...";
-                    ui.style.display = 'block';
-
-                    // 1. Request Permission temporarily to enumerate labels
-                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    
-                    // 2. Find the OBS/OSB Camera
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const targetDevice = devices.find(d => 
-                        d.kind === 'videoinput' && 
-                        d.label.toLowerCase().includes(TABLET_CAM_NAME.toLowerCase())
-                    );
-                    
-                    // 3. Clean up temp stream
-                    tempStream.getTracks().forEach(t => t.stop());
-
-                    if (!targetDevice) {
-                        throw new Error(`Device containing '${TABLET_CAM_NAME}' not found.`);
-                    }
-
-                    status.innerText = `Linking: ${targetDevice.label}`;
-                    
-                    // 4. Join using the specific Device ID
-                    await call.join({ 
-                        userName: 'MacMini-Tablet',
-                        videoSource: targetDevice.deviceId,
-                        audioSource: false // Tablet audio usually handled via PC audio or ignored
-                    });
-                    
-                    // Success: Hide UI (even though window is hidden, good practice)
-                    ui.style.display = 'none';
-                } 
-                
-                // === FACE MODE (Instructor) ===
-                else if (MODE === 'face') {
-                    await call.join({ userName: 'MacMini-Classroom' });
-                }
-
-                // === SCREEN MODE (Passive Viewer) ===
-                else {
-                    await call.join({ userName: 'MacMini-ScreenDisp' });
-                    // Subscribe to everything to ensure we catch the Tablet feed
-                    call.updateParticipant('*', { setSubscribedTracks: true });
-                }
-
-            } catch (err) {
-                ui.style.display = 'block';
-                status.innerText = "Error: " + err.message;
-                console.error(err);
-            }
-        }
-
-        // --- HELPERS ---
-        function renderVideo(track, container) {
-            container.innerHTML = ''; 
-            const videoEl = document.createElement('video');
-            videoEl.srcObject = new MediaStream([track]);
-            videoEl.autoplay = true;
-            videoEl.muted = true; 
-            videoEl.playsInline = true;
-            container.appendChild(videoEl);
-        }
-
-        function playAudio(track) {
-            const audioEl = document.createElement('audio');
-            audioEl.srcObject = new MediaStream([track]);
-            audioEl.autoplay = true;
-            document.body.appendChild(audioEl);
-        }
-
-        start();
-    </script>
-</body>
-</html>
+        // --- 1. CONFIGURE THE CALL OBJECT
