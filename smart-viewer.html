@@ -3,171 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ResQ Smart Viewer</title>
+    <title>CVCH Smart Viewer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        /* 1. LAYOUT & BACKGROUND */
-        body { 
-            margin: 0; padding: 0; 
-            overflow: hidden; 
-            height: 100vh; 
-            display: flex; 
-            justify-content: center; 
-            align-items: center; 
-            background-color: #121212;
-            background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
-            background-size: cover; 
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-
-        /* 2. VIDEO ELEMENT */
-        video { 
-            width: 100%; 
-            height: 100%; 
-            object-fit: cover; 
-            position: absolute; 
-            top: 0; left: 0; 
-            z-index: 1; 
-            background: transparent;
-            transition: opacity 0.5s ease;
-        }
-
-        .hidden { opacity: 0; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; }
+        #call-container { width: 100%; height: 100%; }
     </style>
 </head>
 <body>
-    <video id="videoEl" class="hidden" autoplay playsinline></video>
-    <audio id="audioEl" autoplay></audio>
+    <div id="call-container"></div>
 
     <script>
-        const log = (msg) => console.log(`[SmartViewer] ${msg}`);
+        async function startOrchestrator() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomUrl = urlParams.get('url');
+            const mode = urlParams.get('mode'); // 'face', 'screen', or 'ipad'
 
-        // 1. PARAMS
-        const params = new URLSearchParams(window.location.search);
-        const ROOM_URL = params.get('roomUrl') || params.get('url'); 
-        const MODE = params.get('mode') || 'face';
-
-        if (!ROOM_URL) throw new Error("Missing Room URL");
-
-        // 2. CONFIG
-        const isPassiveMode = (MODE === 'screen');
-        const call = window.DailyIframe.createCallObject({
-            userName: `MacMini-${MODE}`,
-            subscribeToTracksAutomatically: false, 
-            videoSource: !isPassiveMode, 
-            audioSource: !isPassiveMode,
-            dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-        });
-
-        const videoEl = document.getElementById('videoEl');
-        const audioEl = document.getElementById('audioEl');
-
-        // 3. LOGIC
-        const checkParticipant = (p) => {
-            if (p.local) return { ignore: true };
-            const name = (p.user_name || "Guest").toLowerCase();
-            if (name.includes("macmini")) return { ignore: true };
-            if (name.includes("tablet")) return { ignore: true };
-            if (name.includes("android")) return { ignore: true };
-            return { ignore: false, name: p.user_name || "Guest" };
-        };
-
-        // 4. SUBSCRIPTION LOGIC (UPDATED FOR AUDIO)
-        const handleNewParticipant = (p) => {
-            const check = checkParticipant(p);
-            if (check.ignore) return;
-
-            log(`Accepted Instructor: ${check.name}`);
-
-            let subs = {};
-            if (MODE === 'face') {
-                // Monitor 1: Audio Hub
-                // We want Mic Audio AND Screen Audio (for YouTube etc)
-                // We DO NOT want Screen Video (that's for Monitor 2)
-                subs = { audio: true, video: true, screenVideo: false, screenAudio: true };
-            } else if (MODE === 'screen') {
-                // Monitor 2: Visual Hub
-                // We want Screen Video Only. No Audio (to prevent echo).
-                subs = { audio: false, video: false, screenVideo: true, screenAudio: false };
+            if (!roomUrl) {
+                console.error("No room URL provided.");
+                return;
             }
 
-            call.updateParticipant(p.session_id, { setSubscribedTracks: subs });
-        };
+            // 1. Initialize Call Object
+            const callObject = window.DailyIframe.createCallObject({
+                subscribeToAll: mode !== 'ipad', // COST SAVING: iPad mode doesn't download other feeds
+            });
 
-        // 5. RENDER LOGIC
-        const handleTrack = (evt) => {
-            const track = evt.track;
-            const p = evt.participant;
-            if (!track || !p) return;
-            if (checkParticipant(p).ignore) return;
+            // 2. Configure Join Options based on Mode
+            let joinOptions = { url: roomUrl };
 
-            // Mode Check
-            const isScreenShare = p.screen; 
-            
-            if (MODE === 'face') {
-                // Monitor 1:
-                // Block Screen VIDEO. 
-                // Allow Screen AUDIO (YouTube).
-                if (track.kind === 'video' && isScreenShare) return;
-            } else if (MODE === 'screen') {
-                // Monitor 2:
-                // Block Face Camera.
-                // Block All Audio (handled by Monitor 1).
-                if (track.kind === 'audio') return; 
-                if (track.kind === 'video' && !isScreenShare) return;
+            if (mode === 'ipad') {
+                // IPAD MODE: No mic, no camera, just screen capture
+                joinOptions.audioSource = false;
+                joinOptions.videoSource = false;
+            } else if (mode === 'screen') {
+                // SCREEN MODE: Typically just receives instructor feed
+                joinOptions.audioSource = false;
+                joinOptions.videoSource = false;
             }
 
-            log(`Playing ${track.kind}`);
-            const targetEl = track.kind === 'video' ? videoEl : audioEl;
-            
-            if (targetEl.srcObject?.id !== track.id) {
-                targetEl.srcObject = new MediaStream([track]);
+            // 3. Handle Automated Screen Sharing for iPad Mode
+            callObject.on('joined-meeting', async () => {
+                console.log(`Joined in ${mode} mode.`);
                 
-                // Show Video
-                if (track.kind === 'video') {
-                    videoEl.classList.remove('hidden');
+                if (mode === 'ipad') {
+                    try {
+                        // Automatically trigger screen share for the Reflector window
+                        // Note: Safari policy may require a user gesture or specific profile via Hexnode
+                        await callObject.startScreenShare({
+                            displaySurface: 'window',
+                            systemAudio: 'exclude'
+                        });
+                        console.log("iPad screen share initiated.");
+                    } catch (e) {
+                        console.error("Screen share failed:", e);
+                    }
                 }
+            });
 
-                const forcePlay = () => {
-                    targetEl.play().catch(e => {
-                        log("Autoplay blocked, retrying...");
-                        setTimeout(forcePlay, 1000);
-                    });
-                };
-                forcePlay();
-            }
-        };
-
-        // 6. TRACK STOPPED
-        const handleTrackStopped = (evt) => {
-            const track = evt.track;
-            if (!track) return;
-            
-            if (track.kind === 'video') {
-                if (videoEl.srcObject && videoEl.srcObject.getTracks().some(t => t.id === track.id)) {
-                    videoEl.srcObject = null;
-                    videoEl.classList.add('hidden'); 
+            // 4. Join the Room
+            try {
+                await callObject.join(joinOptions);
+                
+                // Embed the video in the container
+                const container = document.getElementById('call-container');
+                const iframe = callObject.iframe();
+                if (iframe) {
+                    container.appendChild(iframe);
                 }
+            } catch (e) {
+                console.error("Join failed:", e);
             }
-        };
+        }
 
-        // 7. EVENTS
-        call.on('participant-joined', (evt) => handleNewParticipant(evt.participant));
-        call.on('participant-updated', (evt) => handleNewParticipant(evt.participant));
-        call.on('track-started', handleTrack);
-        call.on('track-stopped', handleTrackStopped); 
-
-        call.on('joined-meeting', (evt) => {
-            log("Joined. Scanning...");
-            const participants = call.participants();
-            const remotes = Object.values(participants).filter(p => !p.local);
-            if(remotes.length > 0) {
-                remotes.forEach(p => handleNewParticipant(p));
-            }
-        });
-
-        call.join({ url: ROOM_URL });
+        startOrchestrator();
     </script>
 </body>
 </html>
