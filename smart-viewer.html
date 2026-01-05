@@ -2,133 +2,52 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V7.0 - Fallback Logic</title>
-    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+    <title>Camera Scanner</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; height: 100vh; color: white; font-family: sans-serif; }
-        video { width: 100%; height: 100%; object-fit: contain; }
-        #status { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px; z-index: 100; }
+        body { background: #111; color: #0f0; font-family: monospace; padding: 50px; font-size: 24px; }
+        h1 { color: #fff; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        .device { margin-bottom: 20px; padding: 10px; border: 1px solid #333; }
+        .highlight { color: #fff; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="status">Init V7.0...</div>
-    <div id="container"></div>
+    <h1>System Camera Scanner</h1>
+    <div id="list">Scanning devices... allow permissions if asked...</div>
 
     <script>
-        const params = new URLSearchParams(window.location.search);
-        const MODE = params.get('mode'); // 'face', 'tablet', 'screen'
-        const NAME = params.get('name') || 'MacMini-Participant';
-        const PASSIVE = params.get('passive') === 'true'; // From AppleScript
-        const ROOM_URL = params.get('url');
-
-        const statusEl = document.getElementById('status');
-        const container = document.getElementById('container');
-
-        async function start() {
-            if (!ROOM_URL) { statusEl.innerText = "ERR: No URL"; return; }
-            statusEl.innerText = `Mode: ${MODE} | ${NAME}`;
-
-            // 1. SETUP DAILY CALL
-            const call = window.DailyIframe.createCallObject({
-                dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-            });
-
+        async function scan() {
+            const list = document.getElementById('list');
             try {
-                // 2. DEVICE SELECTION LOGIC (Index Based = Safer)
-                let videoSource = false;
-                let audioSource = false;
-
-                if (PASSIVE) {
-                    // SCREEN MODE: Send NOTHING
-                    videoSource = false;
-                    audioSource = false;
-                    statusEl.innerText += " (Passive)";
-                } 
-                else {
-                    // Get devices
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const videoDevs = devices.filter(d => d.kind === 'videoinput');
-                    
-                    if (videoDevs.length === 0) {
-                        statusEl.innerText = "ERR: No Cameras Found";
-                    }
-
-                    if (MODE === 'face') {
-                        // FACE: Prefer 1st device (Default System Cam)
-                        videoSource = videoDevs[0] ? videoDevs[0].deviceId : true;
-                        audioSource = true; 
-                    } 
-                    else if (MODE === 'tablet') {
-                        // TABLET: Prefer 2nd device if exists (Capture Card), else 1st
-                        // This prevents grabbing the webcam if possible
-                        if (videoDevs.length > 1) {
-                            videoSource = videoDevs[1].deviceId;
-                            statusEl.innerText += ` (Using Cam 2: ${videoDevs[1].label})`;
-                        } else {
-                            videoSource = videoDevs[0] ? videoDevs[0].deviceId : true;
-                            statusEl.innerText += ` (Using Cam 1: ${videoDevs[0]?.label})`;
-                        }
-                        audioSource = false; // Tablet has no mic
-                    }
+                // Request permission first
+                await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                
+                // Get all devices
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevs = devices.filter(d => d.kind === 'videoinput');
+                
+                list.innerHTML = "";
+                
+                if (videoDevs.length === 0) {
+                    list.innerHTML = "No cameras found.";
+                    return;
                 }
 
-                // 3. JOIN CALL
-                await call.join({
-                    url: ROOM_URL,
-                    userName: NAME,
-                    videoSource: videoSource,
-                    audioSource: audioSource
-                });
-                
-                // Hide status after success
-                setTimeout(() => statusEl.style.display = 'none', 3000);
-
-                // 4. DISPLAY LOGIC (What do we see?)
-                call.on('track-started', (e) => {
-                    if (e.participant.local && MODE !== 'tablet') return; // Only show local for tablet
-                    
-                    const track = e.track;
-                    const isScreen = e.participant.screen;
-
-                    // TABLET MODE: Show Self (Local)
-                    if (MODE === 'tablet' && e.participant.local && track.kind === 'video') {
-                        display(track);
-                    }
-                    
-                    // SCREEN MODE: Show ONLY Screen Share
-                    else if (MODE === 'screen' && isScreen && track.kind === 'video') {
-                        display(track);
-                    }
-
-                    // FACE MODE: Show Remote Video (NOT Screen, NOT Tablet)
-                    else if (MODE === 'face' && !isScreen && !e.participant.local && track.kind === 'video') {
-                        display(track);
-                    }
-                    
-                    // AUDIO: Always play remote audio (except for tablet mode which is an uplink)
-                    if (track.kind === 'audio' && !e.participant.local && MODE !== 'tablet') {
-                        const aud = document.createElement('audio');
-                        aud.srcObject = new MediaStream([track]);
-                        aud.autoplay = true;
-                        document.body.appendChild(aud);
-                    }
+                videoDevs.forEach((d, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'device';
+                    div.innerHTML = `
+                        <span class="highlight">CAMERA #${index + 1}:</span><br>
+                        Label: <strong>"${d.label}"</strong><br>
+                        ID: <span style="font-size:0.6em; color:#666;">${d.deviceId}</span>
+                    `;
+                    list.appendChild(div);
                 });
 
             } catch (err) {
-                statusEl.innerText = "ERR: " + err.message;
+                list.innerHTML = "Error: " + err.message;
             }
         }
-
-        function display(track) {
-            container.innerHTML = '';
-            const vid = document.createElement('video');
-            vid.srcObject = new MediaStream([track]);
-            vid.autoplay = true;
-            vid.muted = true;
-            container.appendChild(vid);
-        }
-
-        start();
+        scan();
     </script>
 </body>
 </html>
