@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V6.1 - Dynamic Titles</title>
+    <title>CVCH Orchestrator V6.2 - Title Enforcer</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -15,7 +15,7 @@
             justify-content: center; 
             align-items: center;
 
-            /* The Standby Graphic (Visible when no video is playing) */
+            /* The Standby Graphic */
             background-image: url('https://placehold.co/1920x1080/222222/FFFFFF?text=ResQ+Health+Training+Center'); 
             background-size: cover; 
             background-position: center; 
@@ -23,7 +23,6 @@
         }
 
         /* --- 2. VIDEO LAYOUT --- */
-        /* Z-Index 10 ensures video covers the graphic when active */
         video { 
             width: 100%; height: 100%; 
             object-fit: contain; 
@@ -32,7 +31,7 @@
             background: #000; 
         }
 
-        /* --- 3. UI LAYER (Errors/Status) --- */
+        /* --- 3. UI LAYER --- */
         #ui-layer {
             z-index: 20;
             position: relative;
@@ -48,7 +47,6 @@
 </head>
 <body>
     <div id="call-container"></div>
-    
     <div id="ui-layer">
         <h2 id="status-text">Initializing...</h2>
     </div>
@@ -56,18 +54,155 @@
     <script>
         const params = new URLSearchParams(window.location.search);
         const ROOM_URL = params.get('url'); 
-        const MODE = params.get('mode'); // 'face', 'screen', or 'tablet'
+        const MODE = params.get('mode'); 
         
-        // --- DYNAMIC TITLE LOGIC (NEW V6.1) ---
-        // This fixes the race condition where the default title overwrites the AppleScript's name.
-        // If a custom title is passed in the URL (e.g. &title=Instructor%20Face), apply it immediately.
+        // --- TITLE ENFORCER (V6.2 FIX) ---
+        // 1. Get the desired title from the URL (e.g. &title=Instructor%20Face)
         const CUSTOM_TITLE = params.get('title');
+        
         if (CUSTOM_TITLE) {
+            // 2. Set it immediately
             document.title = CUSTOM_TITLE;
+
+            // 3. Create a "guard" to prevent Daily.co from overwriting it later
+            // This watches the <title> tag for changes and reverts them instantly.
+            const titleObserver = new MutationObserver(() => {
+                if (document.title !== CUSTOM_TITLE) {
+                    console.log(`[Title Enforcer] Reverting title to: ${CUSTOM_TITLE}`);
+                    document.title = CUSTOM_TITLE;
+                }
+            });
+            
+            // Start guarding the title
+            const titleEl = document.querySelector('title');
+            if (titleEl) {
+                titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+            }
         }
 
-        // Allow overriding the target device name via URL (default to OBS)
-        // usage: &camera=OBS%20Virtual%20Camera
         const TABLET_CAM_NAME = params.get('camera') || 'OBS'; 
 
-        // --- 1. CONFIGURE THE CALL OBJECT
+        // --- 1. CONFIGURE CALL ---
+        let callOptions = {
+            url: ROOM_URL,
+            subscribeToTracksAutomatically: false,
+            dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+        };
+
+        if (MODE === 'face') {
+            callOptions.audioSource = true; 
+            callOptions.videoSource = true;
+        } else if (MODE === 'tablet') {
+            callOptions.audioSource = false;
+            callOptions.videoSource = false;
+        } else {
+            callOptions.audioSource = false;
+            callOptions.videoSource = false;
+        }
+
+        const call = window.DailyIframe.createCallObject(callOptions);
+
+        // --- 2. REMOTE VIDEO LOGIC ---
+        call.on('track-started', (e) => {
+            const p = e.participant;
+            const track = e.track;
+            if (p.local) return; 
+
+            const isTablet = (p.user_name || "").includes("MacMini-Tablet");
+            const isScreenShare = p.screen;
+            const container = document.getElementById('call-container');
+
+            // MONITOR 1 (Face): Shows Instructor Faces ONLY (No Tablet, No Screen)
+            if (MODE === 'face') {
+                if (track.kind === 'video' && !isScreenShare && !isTablet) {
+                    renderVideo(track, container);
+                }
+                if (track.kind === 'audio') playAudio(track);
+            }
+
+            // MONITOR 2 (Screen): Shows Screen Shares OR Tablet Feed
+            else if (MODE === 'screen') {
+                if (track.kind === 'video' && (isScreenShare || isTablet)) {
+                    renderVideo(track, container);
+                }
+            }
+        });
+
+        call.on('track-stopped', (e) => {
+             if (!e.participant.local) {
+                 document.getElementById('call-container').innerHTML = '';
+             }
+        });
+
+        // --- 3. STARTUP LOGIC ---
+        async function start() {
+            const ui = document.getElementById('ui-layer');
+            const status = document.getElementById('status-text');
+
+            if (!ROOM_URL) {
+                status.innerText = "ERR: No URL Provided";
+                ui.style.display = 'block';
+                return;
+            }
+
+            try {
+                if (MODE === 'tablet') {
+                    status.innerText = "Searching for Tablet Feed...";
+                    ui.style.display = 'block';
+
+                    // Temp permission to scan devices
+                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const targetDevice = devices.find(d => 
+                        d.kind === 'videoinput' && 
+                        d.label.toLowerCase().includes(TABLET_CAM_NAME.toLowerCase())
+                    );
+                    tempStream.getTracks().forEach(t => t.stop());
+
+                    if (!targetDevice) throw new Error(`Device '${TABLET_CAM_NAME}' not found.`);
+
+                    status.innerText = `Linking: ${targetDevice.label}`;
+                    
+                    await call.join({ 
+                        userName: 'MacMini-Tablet',
+                        videoSource: targetDevice.deviceId,
+                        audioSource: false
+                    });
+                    ui.style.display = 'none';
+                } 
+                else if (MODE === 'face') {
+                    await call.join({ userName: 'MacMini-Classroom' });
+                }
+                else {
+                    await call.join({ userName: 'MacMini-ScreenDisp' });
+                    call.updateParticipant('*', { setSubscribedTracks: true });
+                }
+
+            } catch (err) {
+                ui.style.display = 'block';
+                status.innerText = "Error: " + err.message;
+                console.error(err);
+            }
+        }
+
+        function renderVideo(track, container) {
+            container.innerHTML = ''; 
+            const videoEl = document.createElement('video');
+            videoEl.srcObject = new MediaStream([track]);
+            videoEl.autoplay = true;
+            videoEl.muted = true; 
+            videoEl.playsInline = true;
+            container.appendChild(videoEl);
+        }
+
+        function playAudio(track) {
+            const audioEl = document.createElement('audio');
+            audioEl.srcObject = new MediaStream([track]);
+            audioEl.autoplay = true;
+            document.body.appendChild(audioEl);
+        }
+
+        start();
+    </script>
+</body>
+</html>
