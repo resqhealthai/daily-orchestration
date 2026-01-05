@@ -2,52 +2,148 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Camera Scanner</title>
+    <title>CVCH V8.0 - Name Locked</title>
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        body { background: #111; color: #0f0; font-family: monospace; padding: 50px; font-size: 24px; }
-        h1 { color: #fff; border-bottom: 1px solid #444; padding-bottom: 10px; }
-        .device { margin-bottom: 20px; padding: 10px; border: 1px solid #333; }
-        .highlight { color: #fff; font-weight: bold; }
+        body { margin: 0; background: #000; overflow: hidden; height: 100vh; color: white; font-family: sans-serif; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        #status { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px; z-index: 100; pointer-events: none; }
     </style>
 </head>
 <body>
-    <h1>System Camera Scanner</h1>
-    <div id="list">Scanning devices... allow permissions if asked...</div>
+    <div id="status">Initializing V8.0...</div>
+    <div id="container"></div>
 
     <script>
-        async function scan() {
-            const list = document.getElementById('list');
+        // --- CONFIGURATION ---
+        // We use the exact keywords found in your scan
+        const KEYWORD_FACE   = "Logitech"; 
+        const KEYWORD_TABLET = "OBS";
+
+        const params = new URLSearchParams(window.location.search);
+        const MODE = params.get('mode'); // 'face', 'tablet', 'screen'
+        const NAME = params.get('name') || 'MacMini-Participant';
+        const ROOM_URL = params.get('url');
+        const PASSIVE = params.get('passive') === 'true'; 
+
+        const statusEl = document.getElementById('status');
+        const container = document.getElementById('container');
+
+        async function start() {
+            if (!ROOM_URL) { statusEl.innerText = "ERR: No URL"; return; }
+            statusEl.innerText = `Mode: ${MODE}`;
+
+            const call = window.DailyIframe.createCallObject({
+                dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+            });
+
             try {
-                // Request permission first
-                await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                
-                // Get all devices
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevs = devices.filter(d => d.kind === 'videoinput');
-                
-                list.innerHTML = "";
-                
-                if (videoDevs.length === 0) {
-                    list.innerHTML = "No cameras found.";
-                    return;
+                // 1. DEVICE SELECTION (The "Name-Lock")
+                let targetVideoId = false; // Default to OFF
+                let targetAudioId = false; // Default to OFF
+
+                if (PASSIVE || MODE === 'screen') {
+                    // SCREEN MODE: Strict Passive. Send nothing.
+                    targetVideoId = false;
+                    targetAudioId = false;
+                    statusEl.innerText += " (Passive Viewer)";
+                } 
+                else {
+                    // Ask permission to read labels
+                    await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+                        .then(s => s.getTracks().forEach(t => t.stop())); // stop immediately
+
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevs = devices.filter(d => d.kind === 'videoinput');
+
+                    // A. FACE MODE -> Hunt for "Logitech"
+                    if (MODE === 'face') {
+                        const cam = videoDevs.find(d => d.label.includes(KEYWORD_FACE));
+                        if (cam) {
+                            targetVideoId = cam.deviceId;
+                            targetAudioId = true; // Use default mic
+                            statusEl.innerText += ` -> Locked to: ${cam.label}`;
+                        } else {
+                            // Fallback: Use first camera if Logitech missing
+                            targetVideoId = true; 
+                            statusEl.innerText += " -> WRN: Logitech missing, using default";
+                        }
+                    } 
+                    // B. TABLET MODE -> Hunt for "OBS"
+                    else if (MODE === 'tablet') {
+                        const cam = videoDevs.find(d => d.label.includes(KEYWORD_TABLET));
+                        if (cam) {
+                            targetVideoId = cam.deviceId;
+                            targetAudioId = false; // Tablet has no audio
+                            statusEl.innerText += ` -> Locked to: ${cam.label}`;
+                        } else {
+                            statusEl.innerText += " -> ERR: OBS Camera missing!";
+                            return; // Stop. Don't broadcast wrong cam.
+                        }
+                    }
                 }
 
-                videoDevs.forEach((d, index) => {
-                    const div = document.createElement('div');
-                    div.className = 'device';
-                    div.innerHTML = `
-                        <span class="highlight">CAMERA #${index + 1}:</span><br>
-                        Label: <strong>"${d.label}"</strong><br>
-                        ID: <span style="font-size:0.6em; color:#666;">${d.deviceId}</span>
-                    `;
-                    list.appendChild(div);
+                // 2. JOIN CALL
+                await call.join({
+                    url: ROOM_URL,
+                    userName: NAME,
+                    videoSource: targetVideoId,
+                    audioSource: targetAudioId
+                });
+
+                // Hide status after success
+                setTimeout(() => statusEl.style.display = 'none', 4000);
+
+                // 3. DISPLAY LOGIC (What do we see?)
+                call.on('track-started', (e) => {
+                    if (e.participant.local && MODE !== 'tablet') return; 
+                    
+                    const track = e.track;
+                    const isScreen = e.participant.screen;
+                    const p = e.participant;
+
+                    // TABLET: Show Local Self (Confidence Check)
+                    if (MODE === 'tablet' && p.local && track.kind === 'video') {
+                        display(track);
+                    }
+                    
+                    // SCREEN MONITOR: Show ONLY Screen Share
+                    else if (MODE === 'screen' && isScreen && track.kind === 'video') {
+                        display(track);
+                    }
+
+                    // FACE MONITOR: Show Remote Video (NOT Screen, NOT Tablet)
+                    else if (MODE === 'face') {
+                        // We filter out screen shares and our own tablet feed
+                        if (!isScreen && !p.local && !p.user_name.includes("Tablet") && track.kind === 'video') {
+                            display(track);
+                        }
+                    }
+                    
+                    // AUDIO: Always play remote audio (except on tablet uplink)
+                    if (track.kind === 'audio' && !p.local && MODE !== 'tablet') {
+                        const aud = document.createElement('audio');
+                        aud.srcObject = new MediaStream([track]);
+                        aud.autoplay = true;
+                        document.body.appendChild(aud);
+                    }
                 });
 
             } catch (err) {
-                list.innerHTML = "Error: " + err.message;
+                statusEl.innerText = "ERR: " + err.message;
             }
         }
-        scan();
+
+        function display(track) {
+            container.innerHTML = '';
+            const vid = document.createElement('video');
+            vid.srcObject = new MediaStream([track]);
+            vid.autoplay = true;
+            vid.muted = true;
+            container.appendChild(vid);
+        }
+
+        start();
     </script>
 </body>
 </html>
