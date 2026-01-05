@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH Orchestrator V6.5 - Passive Smart Viewer</title>
+    <title>CVCH Orchestrator V6.6 - Smart Device Select</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         /* --- 1. VISUALS & GRAPHIC --- */
@@ -18,6 +18,8 @@
             background-size: cover; 
             background-position: center; 
             background-repeat: no-repeat;
+            font-family: sans-serif;
+            color: white;
         }
 
         /* --- 2. VIDEO LAYOUT --- */
@@ -34,19 +36,19 @@
             z-index: 20;
             position: relative;
             text-align: center;
-            color: white;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.85);
             padding: 20px;
             border-radius: 8px;
-            display: none;
-            font-family: sans-serif;
+            max-width: 80%;
         }
+        .device-list { font-size: 0.8em; color: #aaa; margin-top: 10px; text-align: left; }
     </style>
 </head>
 <body>
     <div id="call-container"></div>
     <div id="ui-layer">
-        <h2 id="status-text">Initializing...</h2>
+        <h2 id="status-text">Initializing V6.6...</h2>
+        <div id="debug-info" class="device-list"></div>
     </div>
 
     <script>
@@ -54,56 +56,40 @@
         const ROOM_URL = params.get('url'); 
         const MODE = params.get('mode'); 
         
-        // --- FLAGS: Check for "Passive" Instructions from AppleScript ---
-        // If AppleScript sends &video=false, strictPassive becomes true
+        // --- FLAGS ---
         const PARAM_VIDEO = params.get('video');
-        const PARAM_AUDIO = params.get('audio');
-        const IS_PASSIVE = (PARAM_VIDEO === 'false') || (MODE === 'screen');
-
+        
         // --- TITLE ENFORCER ---
         const CUSTOM_TITLE = params.get('title');
         if (CUSTOM_TITLE) {
             document.title = CUSTOM_TITLE;
-            const titleObserver = new MutationObserver(() => {
-                if (document.title !== CUSTOM_TITLE) document.title = CUSTOM_TITLE;
-            });
-            const titleEl = document.querySelector('title');
-            if (titleEl) titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
         }
 
-        const TABLET_CAM_NAME = params.get('camera') || 'OBS'; 
+        // --- DEVICE SEARCH TERMS ---
+        // You can override these in the URL if needed, e.g. &tabletName=CamLink
+        const TERM_TABLET = (params.get('tabletName') || 'OBS,Capture,USB').toLowerCase().split(',');
+        const TERM_FACE   = (params.get('faceName')   || 'FaceTime,Built-in,Camera').toLowerCase().split(',');
 
-        // --- 1. CONFIGURE CALL ---
+        // --- 1. SETUP DAILY ---
         let callOptions = {
             url: ROOM_URL,
-            subscribeToTracksAutomatically: false, // We manually subscribe based on mode
+            subscribeToTracksAutomatically: false, 
             dailyConfig: { experimentalChromeVideoMuteLightOff: true }
         };
 
-        // INITIAL CONFIGURATION BASED ON MODE
-        if (MODE === 'face') {
-            // Instructor Face: Needs Camera + Mic
-            callOptions.audioSource = true; 
-            callOptions.videoSource = true;
-        } else if (MODE === 'tablet') {
-            // Tablet: Needs Camera (OBS), No Mic
-            callOptions.audioSource = false; 
-            callOptions.videoSource = true; 
-        } else {
-            // Screen (Passive): NEEDS NOTHING
-            // This prevents the "MacMini-ScreenDisp" track from ever starting
-            callOptions.audioSource = false; 
-            callOptions.videoSource = false;
-        }
+        // We set audio/video source to FALSE initially. 
+        // We will override this with specific Device IDs in the start() function.
+        callOptions.audioSource = false; 
+        callOptions.videoSource = false;
 
         const call = window.DailyIframe.createCallObject(callOptions);
 
-        // --- 2. REMOTE VIDEO LOGIC (What do we display?) ---
+        // --- 2. REMOTE VIDEO LOGIC ---
         call.on('track-started', (e) => {
             const p = e.participant;
             const track = e.track;
 
-            // Allow LOCAL video render ONLY for Tablet Mode (for confidence check)
+            // Allow LOCAL video render ONLY for Tablet Mode (confidence check)
             if (p.local && MODE !== 'tablet') return; 
 
             const isTablet = (p.user_name || "").includes("MacMini-Tablet");
@@ -112,13 +98,12 @@
 
             // A. TABLET MODE (Show Local Feed)
             if (MODE === 'tablet' && p.local && track.kind === 'video') {
-                 console.log("Rendering Local Tablet Feed");
                  renderVideo(track, container);
             }
 
             // B. FACE MODE (Monitor 1: Show Instructor Face)
-            // Logic: Show remote video that is NOT a screen share and NOT the tablet
-            if (MODE === 'face') {
+            else if (MODE === 'face') {
+                // Show remote video that is NOT a screen share and NOT the tablet
                 if (track.kind === 'video' && !isScreenShare && !isTablet && !p.local) {
                     renderVideo(track, container);
                 }
@@ -126,97 +111,115 @@
             }
 
             // C. SCREEN MODE (Monitor 2: Show Instructor Desktop)
-            // Logic: Show remote video ONLY if it IS a screen share
             else if (MODE === 'screen') {
+                // Show remote video ONLY if it IS a screen share
                 if (track.kind === 'video' && isScreenShare && !p.local) {
                     renderVideo(track, container);
                 }
             }
         });
 
-        call.on('track-stopped', (e) => {
-             // Optional cleanup
-        });
-
-        // --- 3. STARTUP LOGIC ---
+        // --- 3. STARTUP & DEVICE SELECTION ---
         async function start() {
             const ui = document.getElementById('ui-layer');
             const status = document.getElementById('status-text');
+            const debug = document.getElementById('debug-info');
 
             if (!ROOM_URL) {
                 status.innerText = "ERR: No URL Provided";
-                ui.style.display = 'block';
                 return;
             }
 
             try {
-                // --- CASE 1: TABLET (Active Uplink) ---
+                // 1. ENUMERATE DEVICES
+                // We need permission first to see labels
+                await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+                
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                const audioDevices = devices.filter(d => d.kind === 'audioinput');
+
+                // DEBUG PRINT
+                debug.innerHTML = "<b>Found Cameras:</b><br>" + videoDevices.map(d => `- ${d.label}`).join('<br>');
+
+                // 2. IDENTIFY SPECIFIC CAMS
+                let targetVideoId = false;
+                let targetAudioId = false;
+
+                // FIND TABLET CAM (Matches 'OBS', 'Capture', or 'USB')
+                const tabletCam = videoDevices.find(d => TERM_TABLET.some(term => d.label.toLowerCase().includes(term)));
+                
+                // FIND FACE CAM (Matches 'FaceTime' OR is just NOT the tablet cam)
+                let faceCam = videoDevices.find(d => TERM_FACE.some(term => d.label.toLowerCase().includes(term)));
+                if (!faceCam && tabletCam) {
+                    // Fallback: If we found a tablet cam, pick the OTHER one as face
+                    faceCam = videoDevices.find(d => d.deviceId !== tabletCam.deviceId);
+                }
+
+                // 3. APPLY LOGIC BASED ON MODE
                 if (MODE === 'tablet') {
-                    status.innerText = "Searching for Tablet Feed...";
-                    ui.style.display = 'block';
-
-                    // Device Enumeration for OBS/Capture Card
-                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const targetDevice = devices.find(d => 
-                        d.kind === 'videoinput' && 
-                        d.label.toLowerCase().includes(TABLET_CAM_NAME.toLowerCase())
-                    );
-                    tempStream.getTracks().forEach(t => t.stop());
-
-                    if (!targetDevice) throw new Error(`Device '${TABLET_CAM_NAME}' not found.`);
-
-                    status.innerText = `Linking: ${targetDevice.label}`;
-                    
-                    await call.join({ 
-                        userName: 'MacMini-Tablet',
-                        videoSource: targetDevice.deviceId,
-                        audioSource: false
-                    });
-
-                    // Force unmute local video so we can see it
-                    call.setLocalVideo(true);
-                    ui.style.display = 'none';
+                    if (tabletCam) {
+                        status.innerText = `Connecting Tablet: ${tabletCam.label}`;
+                        targetVideoId = tabletCam.deviceId;
+                    } else {
+                        status.innerText = "ERR: No Tablet/OBS Device Found";
+                        return; // Stop here so user sees error
+                    }
+                    targetAudioId = false; // Tablet has no audio
                 } 
                 
-                // --- CASE 2: FACE (Active Participant) ---
                 else if (MODE === 'face') {
-                    await call.join({ 
-                        userName: 'MacMini-Classroom',
-                        videoSource: true,
-                        audioSource: true
-                    });
-                    // Subscribe to everything by default, then filter in 'track-started'
-                    call.updateParticipant('*', { setSubscribedTracks: true });
+                    if (faceCam) {
+                        status.innerText = `Connecting Face: ${faceCam.label}`;
+                        targetVideoId = faceCam.deviceId;
+                        targetAudioId = true; // Use default mic
+                    } else {
+                        // Fallback to default if detection fails
+                        status.innerText = "Warning: Exact Face Cam not found, using default.";
+                        targetVideoId = true;
+                        targetAudioId = true;
+                    }
                 }
                 
-                // --- CASE 3: SCREEN (Passive Viewer) ---
                 else {
-                    // Monitor 2 Logic: Join as 'MacMini-ScreenDisp' but SEND NOTHING.
-                    await call.join({ 
-                        userName: 'MacMini-ScreenDisp',
-                        videoSource: false, // Strict: No Video
-                        audioSource: false  // Strict: No Audio
-                    });
-                    
-                    // We must manually subscribe to tracks to SEE them
-                    call.updateParticipant('*', { setSubscribedTracks: true });
+                    // SCREEN MODE (Passive)
+                    status.innerText = "Connecting Passive Screen Viewer...";
+                    targetVideoId = false;
+                    targetAudioId = false;
                 }
 
+                // 4. JOIN CALL
+                await call.join({ 
+                    userName: CUSTOM_TITLE || 'MacMini-Participant',
+                    videoSource: targetVideoId,
+                    audioSource: targetAudioId
+                });
+
+                // Hide UI if successful
+                if (targetVideoId || MODE === 'screen') {
+                     // For tablet, we show self-view, so we hide UI. 
+                     // For Screen, we wait for screen share.
+                     setTimeout(() => { ui.style.display = 'none'; }, 2000);
+                }
+
+                // Force unmute local video for Tablet so it renders on screen
+                if (MODE === 'tablet') call.setLocalVideo(true);
+
+                // Subscribe to tracks
+                call.updateParticipant('*', { setSubscribedTracks: true });
+
             } catch (err) {
-                ui.style.display = 'block';
                 status.innerText = "Error: " + err.message;
                 console.error(err);
             }
         }
 
-        // --- HELPERS ---
         function renderVideo(track, container) {
             container.innerHTML = ''; 
             const videoEl = document.createElement('video');
             videoEl.srcObject = new MediaStream([track]);
             videoEl.autoplay = true;
-            videoEl.muted = true; // Prevent audio feedback loops
+            videoEl.muted = true; 
             videoEl.playsInline = true;
             container.appendChild(videoEl);
         }
