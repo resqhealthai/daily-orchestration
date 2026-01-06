@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v11.5</title>
+    <title>Smart Viewer v11.6</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -10,24 +10,18 @@
             font-family: sans-serif; color: white;
         }
         
-        /* DEBUG BAR - FORCED VISIBLE FOR NOW */
+        /* DEBUG BAR */
         #mode-debug {
             position: absolute; top: 0; left: 0; right: 0;
             background: #F1C40F; color: #000; font-weight: bold; font-size: 16px;
             padding: 10px; text-align: center; z-index: 1000;
-            white-space: pre-wrap; /* Wrap long URLs */
+            white-space: pre-wrap; 
         }
 
         #placeholder { z-index: 5; text-align: center; margin-top: 50px; }
         .icon { font-size: 80px; display: block; margin-bottom: 10px; }
         .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
         .subtext { font-size: 14px; color: #888; margin-top: 10px; }
-        .error-msg { color: #FF4136; background: #333; padding: 10px; margin-top: 20px; border-radius: 5px; }
-        
-        /* MODE COLORS */
-        body.mode-face #placeholder   { color: #7FDBFF; }
-        body.mode-screen #placeholder { color: #2ECC40; }
-        body.mode-tablet #placeholder { color: #FF4136; }
         
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
@@ -39,98 +33,83 @@
     <div id="placeholder">
         <span id="icon" class="icon">⏳</span>
         <div id="status-text" class="text">SYSTEM LOADING</div>
-        <div id="sub-text" class="subtext">Smart Viewer v11.5</div>
-        <div id="error-box" class="error-msg" style="display:none;"></div>
+        <div id="sub-text" class="subtext">Smart Viewer v11.6</div>
     </div>
 
     <div id="container"></div>
 
     <script>
+        // 1. UTILS
         var debug = document.getElementById('mode-debug');
-        debug.innerText = "JS ENGINE STARTED";
+        var logs = [];
+        
+        function updateLog(msg) {
+            logs.push(msg);
+            // Keep only last 3 logs to prevent clutter
+            if (logs.length > 3) logs.shift();
+            debug.innerText = logs.join(" | ");
+            console.log(msg);
+        }
+
+        updateLog("JS STARTED");
 
         window.onerror = function(msg, url, line) {
             debug.style.background = "red";
             debug.style.color = "white";
-            debug.innerText = "CRASH: " + msg;
-            
-            var box = document.getElementById('error-box');
-            box.style.display = 'block';
-            box.innerText = "Error Line " + line + ": " + msg;
+            debug.innerText = "CRASH: " + msg + " (Line " + line + ")";
         };
-    </script>
 
-    <script>
-        // 1. RAW PARAMETER CHECK
+        // 2. PARAMS
         var params = new URLSearchParams(window.location.search);
         var MODE = params.get('mode');
         var URL = params.get('url');
         var NAME = params.get('name');
-
-        // PRINT DIAGNOSTICS TO TOP BAR
-        var diagMsg = "URL Params Detected: ";
-        if (MODE) diagMsg += "[Mode: " + MODE + "] ";
-        else diagMsg += "[Mode: NULL] ";
         
-        if (URL) diagMsg += "[Room URL: YES]";
-        else diagMsg += "[Room URL: NO]";
+        if (MODE) document.body.classList.add('mode-' + MODE);
+        updateLog("MODE: " + MODE);
 
-        debug.innerText = diagMsg;
-
-        // 2. UI LOGIC (Now handles NULL)
+        // 3. UI
         var icon = document.getElementById('icon');
         var txt = document.getElementById('status-text');
         var sub = document.getElementById('sub-text');
         var ph = document.getElementById('placeholder');
 
-        if (MODE) document.body.classList.add('mode-' + MODE);
-
         function setUI() {
             if (MODE === 'face') {
-                icon.innerText = "👤";
-                txt.innerText = "WAITING FOR INSTRUCTOR";
-                sub.innerText = "Monitor 1";
+                icon.innerText = "👤"; txt.innerText = "WAITING FOR INSTRUCTOR";
             } else if (MODE === 'screen') {
-                icon.innerText = "🖥️";
-                txt.innerText = "WAITING FOR SCREEN SHARE";
-                sub.innerText = "Monitor 2";
+                icon.innerText = "🖥️"; txt.innerText = "WAITING FOR SCREEN SHARE";
             } else if (MODE === 'tablet') {
-                icon.innerText = "📡";
-                txt.innerText = "TABLET UPLINK ACTIVE";
-                sub.innerText = "Do Not Close";
-            } else {
-                // FALLBACK FOR UNKNOWN/NULL MODE
-                icon.innerText = "❓";
-                txt.innerText = "UNKNOWN MODE";
-                sub.innerText = "Received: " + (MODE || "NULL");
+                icon.innerText = "📡"; txt.innerText = "TABLET UPLINK ACTIVE";
             }
         }
         setUI();
 
-        // 3. LOAD LIBRARY
+        // 4. LOAD LIB
         function loadLib() {
             var s = document.createElement('script');
             s.src = "https://unpkg.com/@daily-co/daily-js";
             s.async = true;
-            s.onload = function() { startApp(); };
+            s.onload = function() { 
+                updateLog("LIB LOADED");
+                startApp(); 
+            };
             s.onerror = function() { 
-                txt.innerText = "CONNECTION ERROR"; 
-                sub.innerText = "Could not reach Daily.co"; 
+                updateLog("LIB FAILED");
+                txt.innerText = "NETWORK BLOCK"; 
             };
             document.head.appendChild(s);
         }
 
-        // 4. START APP
+        // 5. MAIN LOGIC
         function startApp() {
-            if (!URL) { txt.innerText = "CONFIG ERROR"; sub.innerText = "No Room URL"; return; }
-
+            if (!window.DailyIframe) { updateLog("DAILY MISSING"); return; }
+            
             // Tablet Delay
             if (MODE === 'tablet') {
-                sub.innerText = "Camera Warmup (8s)...";
-                setTimeout(function() {
-                    sub.innerText = "Connecting...";
-                    initCall();
-                }, 8000);
+                sub.innerText = "Waiting 8s...";
+                updateLog("DELAY 8s");
+                setTimeout(initCall, 8000);
             } else {
                 initCall();
             }
@@ -138,32 +117,26 @@
 
         function initCall() {
             try {
+                updateLog("CREATING CALL");
                 var call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
                 call.on('track-started', function(e) {
-                    if (e.track.kind !== 'video') return;
-                    var p = e.participant;
-                    var show = false;
-
-                    if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
-                    if (MODE === 'screen' && !p.local && p.screen) show = true;
-                    if (MODE === 'tablet' && p.local) show = true;
-
-                    if (show) displayVideo(e.track);
+                    if (e.track.kind === 'video') handleVideo(e);
+                });
+                
+                call.on('error', function(e) {
+                    updateLog("DAILY ERR: " + e.errorMsg);
+                });
+                
+                call.on('joined-meeting', function(e) {
+                    updateLog("JOINED ROOM!");
                 });
 
-                call.on('track-stopped', function(e) {
-                    setTimeout(function() {
-                        var v = document.querySelector('video');
-                        if (v && v.srcObject && v.srcObject.getVideoTracks()[0].readyState === 'ended') {
-                            clearVideo();
-                        }
-                    }, 500);
-                });
-
+                // DEVICE & JOIN
                 if (MODE !== 'screen') {
+                    updateLog("HUNTING CAM");
                     navigator.mediaDevices.getUserMedia({ video: true })
                     .then(function() { return navigator.mediaDevices.enumerateDevices(); })
                     .then(function(devs) {
@@ -171,43 +144,51 @@
                         var key = (MODE === 'face') ? "Logitech" : "OBS";
                         var target = vDevs.find(function(d) { return d.label.includes(key); });
                         var vid = target ? target.deviceId : true;
-                        var aud = (MODE === 'face');
-                        joinRoom(call, vid, aud);
+                        
+                        updateLog("CAM: " + (target ? "FOUND" : "DEFAULT"));
+                        doJoin(call, vid, (MODE === 'face'));
                     })
                     .catch(function(err) {
-                        console.log(err);
-                        joinRoom(call, true, (MODE === 'face')); 
+                        updateLog("CAM PERM DENIED");
+                        doJoin(call, true, (MODE === 'face')); 
                     });
                 } else {
-                    joinRoom(call, false, false);
+                    doJoin(call, false, false);
                 }
 
             } catch(e) {
-                txt.innerText = "SYSTEM ERROR";
-                sub.innerText = e.message;
+                updateLog("INIT CRASH: " + e.message);
             }
         }
 
-        function joinRoom(call, vid, aud) {
+        function doJoin(call, vid, aud) {
+            updateLog("JOINING...");
             call.join({ url: URL, userName: NAME, videoSource: vid, audioSource: aud })
             .then(function() {
+                // Success
                 if (MODE === 'tablet' && vid) call.setLocalVideo(true);
+            })
+            .catch(function(e) {
+                updateLog("JOIN FAIL: " + e);
             });
         }
 
-        function displayVideo(track) {
-            var c = document.getElementById('container');
-            c.innerHTML = '';
-            var el = document.createElement('video');
-            el.srcObject = new MediaStream([track]);
-            el.autoplay = true; el.muted = true;
-            c.appendChild(el);
-            ph.style.opacity = '0';
-        }
+        function handleVideo(e) {
+            var p = e.participant;
+            var show = false;
+            if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
+            if (MODE === 'screen' && !p.local && p.screen) show = true;
+            if (MODE === 'tablet' && p.local) show = true;
 
-        function clearVideo() {
-            document.getElementById('container').innerHTML = '';
-            ph.style.opacity = '1';
+            if (show) {
+                var c = document.getElementById('container');
+                c.innerHTML = '';
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; el.muted = true;
+                c.appendChild(el);
+                ph.style.opacity = '0';
+            }
         }
 
         loadLib();
