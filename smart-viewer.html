@@ -2,64 +2,108 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.0 - Layout Debug</title>
+    <title>CVCH V9.1 - Strict Mode</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         body { margin: 0; overflow: hidden; height: 100vh; font-family: sans-serif; display: flex; align-items: center; justify-content: center; text-align: center; }
         body.mode-face   { background-color: #001f3f; color: #7FDBFF; } /* BLUE */
         body.mode-screen { background-color: #111111; color: #2ECC40; } /* GREEN */
         body.mode-tablet { background-color: #85144b; color: #FF4136; } /* RED */
-        h1 { font-size: 3em; } video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; }
-        #ui-layer { position: relative; z-index: 20; background: rgba(0,0,0,0.5); padding: 20px; border-radius: 10px; }
+        h1 { font-size: 3em; } 
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; }
+        #ui-layer { position: relative; z-index: 20; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div id="ui-layer"><h1 id="main-label">Init...</h1><p id="sub-label">V9.0</p></div>
+    <div id="ui-layer">
+        <h1 id="main-label">Init...</h1>
+        <p id="sub-label">V9.1 Strict Mode</p>
+    </div>
     <div id="container"></div>
+
     <script>
         const params = new URLSearchParams(window.location.search);
         const MODE = params.get('mode'); 
         const NAME = params.get('name') || 'Participant';
         const ROOM_URL = params.get('url');
+        
+        // CONFIGURATION
         const KEYWORD_FACE = "Logitech";
-        const KEYWORD_TABLET = "OBS";
+        const KEYWORD_TABLET = "OBS"; // Must match "OBS Virtual Camera"
 
         document.body.classList.add(`mode-${MODE}`);
         const label = document.getElementById('main-label');
+        const subLabel = document.getElementById('sub-label');
+
         if (MODE === 'face') label.innerText = "MONITOR 1 (BLUE)";
         else if (MODE === 'screen') label.innerText = "MONITOR 2 (GREEN)";
         else if (MODE === 'tablet') label.innerText = "TABLET UPLINK (RED)";
 
         async function start() {
             if (!ROOM_URL) return;
-            const call = window.DailyIframe.createCallObject({ dailyConfig: { experimentalChromeVideoMuteLightOff: true } });
 
-            let vid = false, aud = false;
+            // 1. DEVICE HUNTING LOOP
+            let vid = false;
+            let aud = false;
+
             if (MODE !== 'screen') {
                  try {
                     const devs = await navigator.mediaDevices.enumerateDevices();
                     const vDevs = devs.filter(d => d.kind === 'videoinput');
+                    
                     if (MODE === 'face') {
                         const cam = vDevs.find(d => d.label.toLowerCase().includes(KEYWORD_FACE.toLowerCase()));
-                        vid = cam ? cam.deviceId : true; aud = true;
-                    } else if (MODE === 'tablet') {
+                        if (cam) {
+                            vid = cam.deviceId;
+                            aud = true;
+                        } else {
+                            // RETRY LOGIC
+                            label.innerText = "SEARCHING FOR CAM...";
+                            subLabel.innerText = `Looking for: ${KEYWORD_FACE}`;
+                            setTimeout(start, 2000); // Try again in 2s
+                            return;
+                        }
+                    } 
+                    else if (MODE === 'tablet') {
                         const cam = vDevs.find(d => d.label.toLowerCase().includes(KEYWORD_TABLET.toLowerCase()));
-                        vid = cam ? cam.deviceId : true; aud = false;
+                        if (cam) {
+                            vid = cam.deviceId;
+                            aud = false; // No audio for tablet
+                        } else {
+                            // RETRY LOGIC
+                            label.innerText = "WAITING FOR OBS...";
+                            subLabel.innerText = "Ensure Virtual Camera is ON";
+                            setTimeout(start, 2000); // Try again in 2s
+                            return;
+                        }
                     }
-                 } catch(e) {}
+                 } catch(e) {
+                     console.error("Permission or Device Error", e);
+                 }
             }
 
+            // 2. JOIN CALL (Only if devices found)
+            label.innerText = "JOINING...";
+            const call = window.DailyIframe.createCallObject({ 
+                dailyConfig: { experimentalChromeVideoMuteLightOff: true } 
+            });
+
             await call.join({ url: ROOM_URL, userName: NAME, videoSource: vid, audioSource: aud });
+            
+            // 3. HANDLE TRACKS
             if (MODE === 'tablet') call.setLocalVideo(true);
 
             call.on('track-started', (e) => {
                 const p = e.participant;
                 const track = e.track;
+                // LOGIC: Screen sees Screen, Face sees Face, Tablet sees Nothing (just uploads)
                 if (MODE === 'tablet' && p.local && track.kind === 'video') display(track);
                 else if (MODE === 'screen' && p.screen && track.kind === 'video' && !p.local) display(track);
                 else if (MODE === 'face' && !p.screen && !p.local && track.kind === 'video') {
                     if (!p.user_name.includes("Tablet")) display(track);
                 }
+                
+                // AUDIO HANDLING
                 if (track.kind === 'audio' && !p.local && MODE !== 'tablet') {
                     const aud = document.createElement('audio');
                     aud.srcObject = new MediaStream([track]);
@@ -68,13 +112,19 @@
                 }
             });
         }
+
         function display(track) {
-            const c = document.getElementById('container'); c.innerHTML = '';
+            const c = document.getElementById('container'); 
+            c.innerHTML = '';
             const el = document.createElement('video');
-            el.srcObject = new MediaStream([track]); el.autoplay = true; el.muted = true;
+            el.srcObject = new MediaStream([track]); 
+            el.autoplay = true; 
+            el.muted = true;
             c.appendChild(el);
             document.getElementById('ui-layer').style.display = 'none';
         }
+
+        // Init
         start();
     </script>
 </body>
