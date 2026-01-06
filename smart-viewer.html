@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.7 - Stable Logic</title>
+    <title>CVCH V9.8 - Safe Loader</title>
     <style>
         body { 
             background: #000; 
@@ -12,13 +12,14 @@
             display: flex; 
             align-items: center; 
             justify-content: center;
+            font-family: monospace;
+            color: white;
         }
-        /* Mode Specific Backgrounds for Setup phase */
-        body.mode-face   { background-color: #001f3f; } /* Dark Blue */
-        body.mode-screen { background-color: #111; }    /* Dark Gray */
-        body.mode-tablet { background-color: #85144b; } /* Dark Red */
+        /* Mode Specific Backgrounds for Setup */
+        body.mode-face   { background-color: #001f3f; } /* Blue */
+        body.mode-screen { background-color: #111; }    /* Gray */
+        body.mode-tablet { background-color: #85144b; } /* Red */
 
-        /* Full Screen Video */
         video { 
             position: absolute; 
             top: 0; 
@@ -29,110 +30,151 @@
             z-index: 10; 
         }
 
-        /* Status Overlay (Disappears when video starts) */
-        #status {
+        #ui-layer {
             z-index: 20;
-            color: white;
-            font-family: monospace;
-            font-size: 24px;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             padding: 20px;
             border-radius: 8px;
-            text-align: center;
+            max-width: 80%;
+            text-align: left;
         }
-        .error { color: #ff6b6b; }
+        .log-line { margin: 2px 0; }
+        .error { color: #ff6b6b; font-weight: bold; }
         .success { color: #51cf66; }
     </style>
 </head>
 <body>
 
-    <div id="status">V9.7 Initializing...</div>
+    <div id="ui-layer">
+        <h3>V9.8 SYSTEM LOG</h3>
+        <div id="console">Initializing DOM...</div>
+    </div>
     <div id="container"></div>
 
     <script>
-        // === LOGGING HELPER ===
-        const statusDiv = document.getElementById('status');
-        function log(msg, isError = false) {
+        // 1. GLOBAL ERROR TRAP (Must be first)
+        const con = document.getElementById('console');
+        window.onerror = function(msg, source, lineno) {
+            const div = document.createElement('div');
+            div.className = 'log-line error';
+            div.innerText = `CRITICAL SYNTAX ERROR: ${msg} (Line ${lineno})`;
+            con.appendChild(div);
+        };
+
+        // 2. LOGGING HELPER
+        function log(msg, type='') {
+            const div = document.createElement('div');
+            div.className = `log-line ${type}`;
+            div.innerText = `> ${msg}`;
+            con.appendChild(div);
             console.log(msg);
-            statusDiv.innerHTML = msg; // Update on-screen text
-            if (isError) statusDiv.classList.add('error');
         }
 
-        // === 1. ASYNC LOADER (Fixes the "Hanging" issue) ===
-        function loadLibrary() {
-            log("Loading Video Engine...");
+        log("JS Engine Started.", "success");
+
+        // 3. LOAD LIBRARY (V9.6 Method)
+        function loadLib() {
+            log("Fetching Daily.co Library...");
             const script = document.createElement('script');
             script.src = "https://unpkg.com/@daily-co/daily-js";
             script.async = true;
-            script.onload = () => startApp();
-            script.onerror = () => log("CRITICAL ERROR: Internet blocked 'unpkg.com'.", true);
+            script.onload = () => {
+                log("Library Loaded.", "success");
+                runApp();
+            };
+            script.onerror = () => log("ERROR: Could not load Daily JS.", "error");
             document.head.appendChild(script);
         }
 
-        // === 2. MAIN APPLICATION ===
-        async function startApp() {
+        // 4. MAIN LOGIC (V9.7 Rules)
+        async function runApp() {
             try {
                 const params = new URLSearchParams(window.location.search);
                 const MODE = params.get('mode');
-                const ROOM_URL = params.get('url');
+                const URL = params.get('url');
                 const NAME = params.get('name') || "ResQ-Node";
 
-                if (!ROOM_URL) throw new Error("No URL provided in AppleScript.");
+                if (!URL) throw new Error("No URL in parameters.");
                 document.body.classList.add(`mode-${MODE}`);
-                log(`Mode: ${MODE.toUpperCase()} | Joining...`);
+                log(`Mode: ${MODE} | Joining Room...`);
 
-                // -- A. CREATE CALL --
                 const call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
-                // -- B. HANDLE VIDEO STREAMS (THE LOGIC FILTER) --
+                // --- VIDEO FILTERING LOGIC ---
                 call.on('track-started', (e) => {
                     const p = e.participant;
                     const track = e.track;
-                    if (track.kind !== 'video') return; // Ignore audio tracks here
+                    if (track.kind !== 'video') return;
 
-                    let shouldDisplay = false;
-
-                    // LOGIC RULES:
+                    let show = false;
+                    
                     if (MODE === 'screen') {
-                        // Monitor 2: Only show shared screens (remote)
-                        if (!p.local && p.screen) shouldDisplay = true;
+                        // Monitor 2: Only Remote Screens
+                        if (!p.local && p.screen) show = true;
                     } 
                     else if (MODE === 'face') {
-                        // Monitor 1: Show Remote Face (Not screen, Not local, Not Tablet)
-                        if (!p.local && !p.screen && !p.user_name.includes("Tablet")) shouldDisplay = true;
+                        // Monitor 1: Remote Faces Only (No Screens, No Tablet)
+                        if (!p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
                     } 
                     else if (MODE === 'tablet') {
-                        // Tablet Window: Show LOCAL video (Self-Check)
-                        // This lets us see if OBS is actually sending video
-                        if (p.local) shouldDisplay = true;
+                        // Tablet Window: Local Self-View Only
+                        if (p.local) show = true;
                     }
 
-                    if (shouldDisplay) {
-                        displayVideo(track);
+                    if (show) {
+                        log(`Displaying feed from: ${p.user_name}`, "success");
+                        const c = document.getElementById('container');
+                        c.innerHTML = '';
+                        const el = document.createElement('video');
+                        el.srcObject = new MediaStream([track]);
+                        el.autoplay = true;
+                        el.muted = true;
+                        c.appendChild(el);
+                        document.getElementById('ui-layer').style.display = 'none';
                     }
                 });
 
-                // -- C. DEVICE SELECTION --
+                // --- DEVICE SELECTION ---
                 let vid = false;
                 let aud = false;
 
                 if (MODE !== 'screen') {
-                    // Force permission prompt
+                    log("Hunting for camera...");
                     await navigator.mediaDevices.getUserMedia({ video: true });
-                    
                     const devs = await navigator.mediaDevices.enumerateDevices();
                     const vDevs = devs.filter(d => d.kind === 'videoinput');
                     
-                    // KEYWORDS
-                    const keyword = (MODE === 'face') ? "Logitech" : "OBS"; 
+                    const keyword = (MODE === 'face') ? "Logitech" : "OBS";
                     const target = vDevs.find(d => d.label.includes(keyword));
 
                     if (target) {
+                        log(`Found ${keyword}: ${target.label}`, "success");
                         vid = target.deviceId;
-                        aud = (MODE === 'face'); // Audio only on Face Monitor
-                        log(`Camera Selected: ${target.label}`);
+                        aud = (MODE === 'face');
                     } else {
-                        log(`WARNING: Camera '${keyword}' not found. Using Default.`, true);
-                        // Fallback: If strict
+                        log(`WARNING: '${keyword}' not found. Using default.`, "error");
+                        vid = true; // Fallback
+                    }
+                }
+
+                // --- JOIN ---
+                await call.join({ url: URL, userName: NAME, videoSource: vid, audioSource: aud });
+                
+                if (MODE === 'tablet') {
+                    log("Activating Tablet Uplink...");
+                    call.setLocalVideo(true);
+                }
+
+            } catch (err) {
+                log(`CRASH: ${err.message}`, "error");
+            }
+        }
+
+        // START
+        loadLib();
+
+    </script>
+</body>
+</html>
