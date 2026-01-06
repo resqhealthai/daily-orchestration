@@ -1,144 +1,195 @@
--- ============================================================
--- ResQ Health Training System - CVCH Orchestrator (V10.9)
--- Fixes: Trims hidden newlines/spaces + Verifies URL with Popup
--- Matches: Smart Viewer v11.7 (or newer)
--- ============================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Viewer v11.7</title>
+    <style>
+        body { 
+            background: #000; margin: 0; overflow: hidden; height: 100vh; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: sans-serif; color: white;
+        }
+        
+        /* DEBUG BAR - Shows URL and Status at top */
+        #mode-debug {
+            position: absolute; top: 0; left: 0; right: 0;
+            background: #F1C40F; color: #000; font-weight: bold; font-size: 16px;
+            padding: 15px; text-align: center; z-index: 1000;
+            white-space: pre-wrap; word-break: break-all;
+        }
 
-property viewerBaseURL : "https://resqhealthai.github.io/daily-orchestration/smart-viewer.html"
-property configURL : "https://raw.githubusercontent.com/resqhealthai/daily-orchestration/main/config.json"
+        #placeholder { z-index: 5; text-align: center; margin-top: 80px; }
+        .icon { font-size: 80px; display: block; margin-bottom: 10px; }
+        .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
+        .subtext { font-size: 14px; color: #888; margin-top: 10px; }
+        
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
+    </style>
+</head>
+<body>
 
--- APP CONFIG
-property scrcpyCommand : "/opt/homebrew/bin/scrcpy"
-property chromeProfile : "Profile 28"
+    <div id="mode-debug">HTML LOADED</div>
 
--- MONITOR CONFIG
-property mon1_W : 1920
-property mon1_H : 1080
-property mon2_W : 2048
-property mon2_Y_Start : -250
-property mon2_H_Forced : 1600
+    <div id="placeholder">
+        <span id="icon" class="icon">⏳</span>
+        <div id="status-text" class="text">SYSTEM LOADING</div>
+        <div id="sub-text" class="subtext">Smart Viewer v11.7</div>
+    </div>
 
-on run
-    try
-        -- 0. CLEAN SLATE
-        tell application "Safari" to quit
-        delay 2
+    <div id="container"></div>
+
+    <script>
+        // 1. LOGGING UTILS
+        var debug = document.getElementById('mode-debug');
         
-        -- 1. LAUNCH DEPENDENCIES
-        my launchDependencies()
+        function updateLog(msg) {
+            debug.innerText = msg;
+            console.log(msg);
+        }
+
+        window.onerror = function(msg, url, line) {
+            debug.style.background = "red";
+            debug.style.color = "white";
+            debug.innerText = "CRASH: " + msg;
+        };
+
+        // 2. PARAMS & URL CLEANING
+        var params = new URLSearchParams(window.location.search);
+        var MODE = params.get('mode');
+        var RAW_URL = params.get('url');
+        var NAME = params.get('name');
         
-        -- 2. FETCH & PARSE CONFIGURATION
-        set macMiniName to do shell script "scutil --get ComputerName"
-        set configJSON to do shell script "curl -s --max-time 10 " & quoted form of configURL
-        
-        -- PARSE JSON
-        set rawURL to my getRoomUrlFromJSON(configJSON, macMiniName)
-        
-        if rawURL is missing value or rawURL is "" then
-            error "FAILED LOOKUP. Mac Name: [" & macMiniName & "]. Could not find match in config.json."
-        end if
-        
-        -- TRIM WHITESPACE (The Fix for the "Joining" Hang)
-        set fullRoomURL to my trimText(rawURL)
-        
-        -- *** VERIFICATION POPUP ***
-        display dialog "Verifying Room URL for " & macMiniName & ":" & return & return & fullRoomURL buttons {"Cancel", "Confirm & Launch"} default button "Confirm & Launch"
-        
-        -- Generate Cache-Busted URLs
-        set timestamp to do shell script "date +%s"
-        set baseWithCache to viewerBaseURL & "?v=" & timestamp
-        
-        -- URL ENCODE
-        set safeRoomURL to my urlEncode(fullRoomURL)
-        
-        set faceURL to baseWithCache & "&url=" & safeRoomURL & "&mode=face&name=MacMini-Classroom"
-        set screenURL to baseWithCache & "&url=" & safeRoomURL & "&mode=screen&name=Monitor-2-Rx&passive=true"
-        set tabletURL to baseWithCache & "&url=" & safeRoomURL & "&mode=tablet&name=MacMini-Tablet"
-        
-        -- 3. LAUNCH CHROME (TABLET UPLINK)
-        set chromeCmd to "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome"
-        set args to " --new-window --profile-directory=" & quoted form of chromeProfile & " " & quoted form of tabletURL
-        do shell script chromeCmd & args & " > /dev/null 2>&1 &"
-        
-        delay 10
-        
-        -- 4. LAUNCH SAFARI (MONITORS)
-        tell application "Safari"
-            activate
+        // Safety: Trim whitespace and quotes from URL
+        var URL = RAW_URL ? RAW_URL.trim().replace(/"/g, '') : "";
+
+        if (MODE) document.body.classList.add('mode-' + MODE);
+
+        // 3. UI SETUP
+        var icon = document.getElementById('icon');
+        var txt = document.getElementById('status-text');
+        var sub = document.getElementById('sub-text');
+        var ph = document.getElementById('placeholder');
+
+        function setUI() {
+            if (MODE === 'face') {
+                icon.innerText = "👤"; txt.innerText = "WAITING FOR INSTRUCTOR";
+            } else if (MODE === 'screen') {
+                icon.innerText = "🖥️"; txt.innerText = "WAITING FOR SCREEN SHARE";
+            } else if (MODE === 'tablet') {
+                icon.innerText = "📡"; txt.innerText = "TABLET UPLINK ACTIVE";
+            }
+        }
+        setUI();
+
+        // 4. LOAD DAILY LIBRARY
+        function loadLib() {
+            var s = document.createElement('script');
+            s.src = "https://unpkg.com/@daily-co/daily-js";
+            s.async = true;
+            s.onload = function() { startApp(); };
+            s.onerror = function() { 
+                updateLog("FAIL: Could not load Daily JS Library"); 
+            };
+            document.head.appendChild(s);
+        }
+
+        // 5. MAIN LOGIC
+        function startApp() {
+            // DIAGNOSTIC: Show the exact URL we are trying to hit
+            updateLog("TARGET: " + URL);
             
-            -- Win 1 (Face)
-            make new document with properties {URL:faceURL}
-            set bounds of window 1 to {0, 0, mon1_W, mon1_H}
-            my safeToggleUI()
+            if (!URL || URL === "undefined") {
+                updateLog("ERROR: INVALID URL (Check JSON Config)");
+                return;
+            }
+
+            // Stagger start time for Tablet to prevent camera conflict
+            if (MODE === 'tablet') {
+                setTimeout(initCall, 8000);
+            } else {
+                initCall();
+            }
+        }
+
+        function initCall() {
+            try {
+                var call = window.DailyIframe.createCallObject({
+                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+                });
+
+                // VIDEO RECEIVED
+                call.on('track-started', function(e) {
+                    if (e.track.kind === 'video') handleVideo(e);
+                });
+                
+                // STATUS UPDATES
+                call.on('error', function(e) { updateLog("DAILY ERROR: " + e.errorMsg); });
+                call.on('joined-meeting', function(e) { updateLog("SUCCESS: JOINED ROOM!"); });
+
+                // DEVICE SELECTION & JOIN
+                if (MODE !== 'screen') {
+                    navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function() { return navigator.mediaDevices.enumerateDevices(); })
+                    .then(function(devs) {
+                        var vDevs = devs.filter(function(d) { return d.kind === 'videoinput'; });
+                        var key = (MODE === 'face') ? "Logitech" : "OBS";
+                        var target = vDevs.find(function(d) { return d.label.includes(key); });
+                        var vid = target ? target.deviceId : true;
+                        
+                        doJoin(call, vid, (MODE === 'face'));
+                    })
+                    .catch(function(err) {
+                        // If specific cam fails, try default
+                        doJoin(call, true, (MODE === 'face')); 
+                    });
+                } else {
+                    doJoin(call, false, false);
+                }
+
+            } catch(e) {
+                updateLog("INIT CRASH: " + e.message);
+            }
+        }
+
+        function doJoin(call, vid, aud) {
+            updateLog("ATTEMPTING JOIN: " + URL);
             
-            -- Win 2 (Screen)
-            make new document with properties {URL:screenURL}
-            set bounds of window 1 to {mon1_W, mon2_Y_Start, (mon1_W + mon2_W), mon2_H_Forced}
-            my safeToggleUI()
-        end tell
-        
-        return "SUCCESS - ORCHESTRATOR V10.9"
-    on error errMsg
-        return "CRASH: " & errMsg
-    end try
-end run
+            // TIMEOUT TRAP: If not joined in 15 seconds, warn user.
+            var joinTimeout = setTimeout(function() {
+                updateLog("TIMEOUT: Connection hanged. Firewall blocking WebRTC?");
+            }, 15000);
 
--- ============================================================
--- HELPERS
--- ============================================================
+            call.join({ url: URL, userName: NAME, videoSource: vid, audioSource: aud })
+            .then(function() {
+                clearTimeout(joinTimeout);
+                if (MODE === 'tablet' && vid) call.setLocalVideo(true);
+            })
+            .catch(function(e) {
+                clearTimeout(joinTimeout);
+                updateLog("JOIN FAILED: " + e);
+            });
+        }
 
-on launchDependencies()
-    try
-        do shell script "open -b 'com.obsproject.obs-studio' --args --startvirtualcam"
-        delay 5 
-    on error
-        display dialog "Could not find OBS." buttons {"OK"}
-    end try
-    try
-        do shell script "pgrep -x scrcpy"
-    on error
-        tell application "Terminal"
-            do script scrcpyCommand
-            activate
-        end tell
-        delay 3
-    end try
-end launchDependencies
+        function handleVideo(e) {
+            var p = e.participant;
+            var show = false;
+            // Mode-specific filtering rules
+            if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
+            if (MODE === 'screen' && !p.local && p.screen) show = true;
+            if (MODE === 'tablet' && p.local) show = true;
 
-on safeToggleUI()
-    try
-        tell application "System Events" to tell process "Safari"
-            if exists (menu item "Hide Toolbar" of menu "View" of menu bar 1) then
-                click menu item "Hide Toolbar" of menu "View" of menu bar 1
-            end if
-        end tell
-    end try
-end safeToggleUI
+            if (show) {
+                var c = document.getElementById('container');
+                c.innerHTML = '';
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; el.muted = true;
+                c.appendChild(el);
+                ph.style.opacity = '0';
+            }
+        }
 
--- SMART JSON PARSER
-on getRoomUrlFromJSON(jsonString, macName)
-    try
-        set jsScript to "var config = " & jsonString & "; " & ¬
-            "var search = '" & macName & "'.toLowerCase().replace(/\\s/g, ''); " & ¬
-            "var locs = config['locations'] || {}; " & ¬
-            "var foundKey = Object.keys(locs).find(k => k.toLowerCase().replace(/\\s/g, '') === search); " & ¬
-            "var target = foundKey ? locs[foundKey] : null; " & ¬
-            "target ? target.roomUrl : '';"
-        set resultURL to run script jsScript in "JavaScript"
-        return resultURL
-    on error
-        return missing value
-    end try
-end getRoomUrlFromJSON
-
--- TRIM WHITESPACE (Removes invisible newlines)
-on trimText(theText)
-    set js to "var str = '" & theText & "'; str.trim();"
-    return run script js in "JavaScript"
-end trimText
-
--- URL CLEANER
-on urlEncode(str)
-    set js to "encodeURIComponent('" & str & "')"
-    return run script js in "JavaScript"
-end urlEncode
+        loadLib();
+    </script>
+</body>
+</html>
