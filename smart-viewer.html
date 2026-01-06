@@ -2,88 +2,117 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.5 - High Contrast</title>
-    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+    <title>CVCH V9.6 - Async Loader</title>
     <style>
-        /* FORCE WHITE BACKGROUND, BLACK TEXT */
-        body { 
-            background-color: #FFFFFF !important; 
-            color: #000000 !important; 
-            font-family: monospace; 
-            font-size: 18px; 
-            margin: 20px;
-            overflow: auto; /* Allow scrolling */
-        }
-        #log-container {
-            border: 2px solid red;
-            padding: 20px;
-            background: #eee;
-        }
+        body { background: #fff; color: #000; font-family: monospace; font-size: 18px; padding: 20px; }
+        .log { margin-bottom: 5px; border-bottom: 1px solid #ddd; }
         .error { color: red; font-weight: bold; }
         .success { color: green; font-weight: bold; }
-        h1 { margin-top: 0; }
-        video {
-            position: fixed; bottom: 10px; right: 10px; width: 300px; height: 200px; 
-            border: 5px solid blue; z-index: 100;
-        }
+        video { position: fixed; bottom: 10px; right: 10px; width: 300px; height: 200px; border: 5px solid blue; }
     </style>
 </head>
 <body>
-
-    <div id="log-container">
-        <h1>V9.5 DIAGNOSTIC LOG</h1>
-        <div id="console-output">Initializing...</div>
-    </div>
+    <h1>V9.6 SYSTEM LOADER</h1>
+    <div id="console"></div>
 
     <script>
-        const out = document.getElementById('console-output');
-        
-        // HELPER: Write to screen immediately
-        function log(msg, type) {
-            const div = document.createElement('div');
-            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            if (type) div.className = type;
-            out.appendChild(div);
+        // 1. SETUP LOGGING (No dependencies)
+        const con = document.getElementById('console');
+        function log(msg, type='') {
+            const d = document.createElement('div');
+            d.className = `log ${type}`;
+            d.innerText = `> ${msg}`;
+            con.appendChild(d);
         }
 
-        // GLOBAL ERROR CATCHER
-        window.onerror = function(message, source, lineno, colno, error) {
-            log(`CRITICAL SYSTEM ERROR: ${message}`, 'error');
-        };
+        // 2. PROVE JS IS ALIVE
+        log("JavaScript Engine: ONLINE", "success");
 
-        // STARTUP CHECK
-        try {
-            log("Script started.");
-
-            // 1. Check Parameters
-            const params = new URLSearchParams(window.location.search);
-            const MODE = params.get('mode');
-            const URL = params.get('url');
-            log(`Mode detected: ${MODE || 'NONE'}`);
-            log(`URL detected: ${URL ? 'YES' : 'NO'}`);
-
-            if (!URL) throw new Error("Missing Room URL in parameters.");
-
-            // 2. Check Daily Library
-            if (!window.DailyIframe) {
-                throw new Error("Daily.co Library failed to load. Check Internet Connection.");
-            } else {
-                log("Daily Library loaded successfully.", "success");
-            }
-
-            // 3. Init Call
-            log("Creating Call Object...");
-            const call = window.DailyIframe.createCallObject({
-                dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-            });
-
-            // 4. Setup Events
-            call.on('joined-meeting', () => log("Successfully Joined Meeting!", "success"));
-            call.on('error', (e) => log(`DailyAPI Error: ${e.errorMsg}`, "error"));
-            call.on('left-meeting', () => log("Left meeting."));
+        // 3. MANUAL LIBRARY INJECTION
+        function loadDailyLibrary() {
+            log("Attempting to download Daily.co library...");
             
-            call.on('track-started', (e) => {
-                if (e.participant.local) return;
-                log(`Video Track Received from: ${e.participant.user_name}`, "success");
+            const script = document.createElement('script');
+            script.src = "https://unpkg.com/@daily-co/daily-js";
+            script.async = true;
+            
+            script.onload = () => {
+                log("Library Downloaded Successfully!", "success");
+                runApp(); // START THE APP ONLY AFTER LOAD
+            };
+            
+            script.onerror = () => {
+                log("CRITICAL ERROR: Could not reach 'unpkg.com'. Check Internet/Firewall.", "error");
+            };
+            
+            document.head.appendChild(script);
+        }
+
+        // 4. MAIN APPLICATION LOGIC
+        async function runApp() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const MODE = params.get('mode');
+                const URL = params.get('url');
                 
-                //
+                if (!URL) { log("Error: No Room URL provided.", "error"); return; }
+                log(`Starting Mode: ${MODE}`);
+
+                // Create Call
+                const call = window.DailyIframe.createCallObject({
+                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+                });
+
+                call.on('joined-meeting', () => log("Joined Meeting!", "success"));
+                call.on('error', (e) => log(`Daily Error: ${e.errorMsg}`, "error"));
+                
+                // Track Handler
+                call.on('track-started', (e) => {
+                    if (e.participant.local) return;
+                    log(`Video received from: ${e.participant.user_name}`, "success");
+                    const el = document.createElement('video');
+                    el.srcObject = new MediaStream([e.track]);
+                    el.autoplay = true; el.muted = true;
+                    document.body.appendChild(el);
+                });
+
+                // Device Selection
+                let vSource = false;
+                if (MODE !== 'screen') {
+                    log("Asking for Camera Permission...");
+                    await navigator.mediaDevices.getUserMedia({ video: true });
+                    
+                    const devs = await navigator.mediaDevices.enumerateDevices();
+                    const videos = devs.filter(d => d.kind === 'videoinput');
+                    
+                    const keyword = (MODE === 'face') ? "Logitech" : "OBS";
+                    const target = videos.find(d => d.label.includes(keyword));
+                    
+                    if (target) {
+                        log(`Selected Camera: ${target.label}`, "success");
+                        vSource = target.deviceId;
+                    } else {
+                        log(`Camera '${keyword}' NOT found.`, "error");
+                        videos.forEach(v => log(`Seen: ${v.label}`));
+                    }
+                }
+
+                log("Joining Room...");
+                await call.join({ url: URL, userName: params.get('name'), videoSource: vSource, audioSource: (MODE==='face') });
+                
+                if (MODE === 'tablet') {
+                    log("Activating Tablet Uplink...");
+                    call.setLocalVideo(true);
+                }
+
+            } catch(e) {
+                log(`App Crash: ${e.message}`, "error");
+            }
+        }
+
+        // START
+        loadDailyLibrary();
+
+    </script>
+</body>
+</html>
