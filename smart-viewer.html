@@ -2,50 +2,127 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v15.2</title>
+    <title>Smart Viewer v15.4</title>
     <style>
-        body { background: #000; margin: 0; overflow: hidden; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; color: white; }
-        #status { font-size: 24px; font-weight: bold; color: #666; }
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
+        body { 
+            background: #000; margin: 0; overflow: hidden; height: 100vh; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: sans-serif; color: white;
+        }
+
+        /* --- STANDBY GRAPHIC --- */
+        #standby {
+            text-align: center;
+            z-index: 20;
+            transition: opacity 0.5s ease;
+            width: 80%;
+        }
+        
+        .logo {
+            font-size: 80px; /* Medical Icon */
+            margin-bottom: 30px;
+            display: block;
+        }
+        
+        .status-text {
+            font-size: 32px;
+            font-weight: 300;
+            letter-spacing: 1px;
+            color: #ccc;
+            line-height: 1.5;
+            text-transform: uppercase;
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        }
+
+        .pulse {
+            animation: pulse-animation 2s infinite ease-in-out;
+        }
+
+        @keyframes pulse-animation {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
+        }
+
+        /* VIDEO CONTAINER */
+        video { 
+            position: absolute; top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            object-fit: contain; 
+            z-index: 10; 
+            background: black; 
+        }
     </style>
 </head>
 <body>
-    <div id="status">INITIALIZING V15.2...</div>
+
+    <div id="standby">
+        <div class="logo">⚕️</div> 
+        <div id="status" class="status-text pulse">Loading...</div>
+    </div>
+
     <div id="container"></div>
+
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
         var params = new URLSearchParams(window.location.search);
         var MODE = params.get('mode');
-        // FIX: Renamed variable to 'targetURL' to prevent Safari crash
+        // CRITICAL FIX: 'targetURL' variable name prevents Safari crash
         var targetURL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
         var NAME = params.get('name') || "Smart-Viewer";
+        
         var stat = document.getElementById('status');
+        var standby = document.getElementById('standby');
         var container = document.getElementById('container');
 
-        if (!targetURL) { stat.innerText = "NO URL"; } else { init(); }
+        // 1. SET CUSTOM MESSAGES IMMEDIATELY
+        var customMsg = "Initializing...";
+        
+        if (MODE === 'face') {
+            customMsg = "Awaiting instructor's camera and microphone";
+        } else if (MODE === 'screen') {
+            customMsg = "Awaiting instructor's screen share";
+        } else if (MODE === 'tablet') {
+            customMsg = "Connecting Tablet Uplink...";
+        }
+        
+        // Apply text
+        stat.innerText = customMsg;
+
+        if (!targetURL) { 
+            stat.innerText = "CONFIG ERROR: NO URL FOUND"; 
+            stat.style.color = "red";
+        } else { 
+            init(); 
+        }
 
         function init() {
-            stat.innerText = "CONNECTING...";
             try {
-                // 1. DETERMINE ROLES
-                let isTablet = (MODE === 'tablet');
-
                 // 2. CREATE CALL
                 var call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+                    dailyConfig: { 
+                        experimentalChromeVideoMuteLightOff: true 
+                    }
                 });
 
                 call.on('track-started', handleVideo);
-                call.on('error', (e) => { stat.innerText = "ERR: " + e.errorMsg; });
-                call.on('joined-meeting', () => { stat.innerText = "WAITING FOR VIDEO..."; });
+                call.on('error', (e) => { 
+                    stat.innerText = "CONNECTION ERROR: " + e.errorMsg; 
+                    stat.style.color = "red";
+                });
+                
+                // Note: We do NOT change text on 'joined-meeting' anymore, 
+                // so your custom message stays visible until video arrives.
 
-                // 3. JOIN (Monitors = Passive / Tablet = Active)
+                // 3. JOIN
+                let isTablet = (MODE === 'tablet');
+                
                 call.join({ 
                     url: targetURL, 
                     userName: NAME,
                     audioSource: isTablet ? true : false, 
                     videoSource: isTablet ? true : false
-                }).catch(e => { stat.innerText = "FAIL: " + e; });
+                }).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
 
             } catch(e) { stat.innerText = "CRASH: " + e.message; }
         }
@@ -55,12 +132,22 @@
             if (p.local && MODE !== 'tablet') return; 
 
             var show = false;
-            if (MODE === 'face' && !p.screen && !p.user_name.includes("Tablet")) show = true;
-            if (MODE === 'screen' && p.screen) show = true;
-            if (MODE === 'tablet' && !p.screen && !p.local) show = true;
+            // ROUTING LOGIC
+            if (MODE === 'face') {
+                if (!p.screen && !p.user_name.includes("Tablet")) show = true;
+            } 
+            else if (MODE === 'screen') {
+                if (p.screen) show = true;
+            }
+            else if (MODE === 'tablet') {
+                if (!p.screen && !p.local) show = true;
+            }
 
             if (show) {
-                stat.style.display = 'none';
+                // HIDE STANDBY GRAPHIC
+                standby.style.display = 'none';
+                
+                // SHOW VIDEO
                 container.innerHTML = ''; 
                 var el = document.createElement('video');
                 el.srcObject = new MediaStream([e.track]);
