@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V11.3 - Compatibility</title>
+    <title>Smart Viewer v11.4</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -10,25 +10,24 @@
             font-family: sans-serif; color: white;
         }
         
-        /* YELLOW DEBUG BAR */
+        /* DEBUG BAR (Hidden by default) */
         #mode-debug {
             position: absolute; top: 0; left: 0; right: 0;
             background: #F1C40F; color: #000; font-weight: bold; font-size: 20px;
-            padding: 10px; text-align: center; z-index: 1000;
+            padding: 10px; text-align: center; z-index: 1000; display: none;
         }
 
-        /* CENTER GRAPHIC */
         #placeholder { z-index: 5; text-align: center; margin-top: 50px; }
         .icon { font-size: 80px; display: block; margin-bottom: 10px; }
         .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
         .subtext { font-size: 14px; color: #888; margin-top: 10px; }
         .error-msg { color: #FF4136; background: #333; padding: 10px; margin-top: 20px; border-radius: 5px; }
-
+        
         /* MODE COLORS */
         body.mode-face #placeholder   { color: #7FDBFF; }
         body.mode-screen #placeholder { color: #2ECC40; }
         body.mode-tablet #placeholder { color: #FF4136; }
-
+        
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
 </head>
@@ -38,104 +37,26 @@
 
     <div id="placeholder">
         <span id="icon" class="icon">⏳</span>
-        <div id="status-text" class="text">LOADING...</div>
-        <div id="sub-text" class="subtext">V11.3 Compatibility</div>
+        <div id="status-text" class="text">SYSTEM LOADING</div>
+        <div id="sub-text" class="subtext">Smart Viewer v11.4</div>
         <div id="error-box" class="error-msg" style="display:none;"></div>
     </div>
 
     <div id="container"></div>
 
     <script>
-        // --- 1. INSTANT LIFE CHECK ---
-        var debugBar = document.getElementById('mode-debug');
-        debugBar.innerText = "JS STARTED (Loading Logic...)";
-
-        // --- 2. GLOBAL ERROR HANDLER ---
-        window.onerror = function(msg, src, line) {
+        var debug = document.getElementById('mode-debug');
+        
+        window.onerror = function(msg, url, line) {
+            debug.style.display = 'block';
+            debug.innerText = "SYSTEM ERROR";
+            
             var box = document.getElementById('error-box');
             box.style.display = 'block';
-            box.innerText = "CRASH: " + msg + " (Line " + line + ")";
-            debugBar.innerText = "SYSTEM FAILURE";
+            box.innerText = "Error: " + msg + " (Line " + line + ")";
         };
+    </script>
 
-        // --- 3. PARAMETER EXTRACTION ---
-        var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
-        var URL = params.get('url');
-        var NAME = params.get('name');
-
-        // Update Debug Bar with Mode
-        if (MODE) {
-            debugBar.innerText = "CURRENT MODE: " + MODE.toUpperCase();
-            document.body.classList.add('mode-' + MODE);
-        } else {
-            debugBar.innerText = "ERROR: NO MODE DETECTED";
-        }
-
-        // --- 4. UI SETUP ---
-        var icon = document.getElementById('icon');
-        var txt = document.getElementById('status-text');
-        var sub = document.getElementById('sub-text');
-        var ph = document.getElementById('placeholder');
-
-        function setUI() {
-            if (MODE === 'face') {
-                icon.innerText = "👤";
-                txt.innerText = "WAITING FOR INSTRUCTOR";
-                sub.innerText = "Monitor 1 (Remote Face)";
-            } else if (MODE === 'screen') {
-                icon.innerText = "🖥️";
-                txt.innerText = "WAITING FOR SCREEN SHARE";
-                sub.innerText = "Monitor 2 (Remote Screen)";
-            } else if (MODE === 'tablet') {
-                icon.innerText = "📡";
-                txt.innerText = "TABLET UPLINK ACTIVE";
-                sub.innerText = "Do not minimize this window";
-            } else {
-                txt.innerText = "MODE ERROR";
-                sub.innerText = "Check AppleScript URL Generation";
-            }
-        }
-        setUI();
-
-        // --- 5. LOAD LIBRARY ---
-        function loadLib() {
-            var s = document.createElement('script');
-            s.src = "https://unpkg.com/@daily-co/daily-js";
-            s.async = true;
-            s.onload = function() { runApp(); };
-            s.onerror = function() { txt.innerText = "NETWORK ERROR"; sub.innerText = "Could not load Daily.co library"; };
-            document.head.appendChild(s);
-        }
-
-        // --- 6. MAIN APP LOGIC ---
-        async function runApp() {
-            try {
-                if (!URL) throw new Error("Missing Room URL");
-
-                // Tablet Delay (Using Promise wrapper for older browser safety)
-                if (MODE === 'tablet') {
-                    sub.innerText = "Yielding to Face Cam (8s)...";
-                    await new Promise(function(resolve) { setTimeout(resolve, 8000); });
-                    sub.innerText = "Connecting...";
-                }
-
-                var call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-                });
-
-                // TRACK STARTED
-                call.on('track-started', function(e) {
-                    if (e.track.kind !== 'video') return;
-                    var p = e.participant;
-                    var show = false;
-
-                    // STRICT FILTERING RULES
-                    if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
-                    if (MODE === 'screen' && !p.local && p.screen) show = true;
-                    if (MODE === 'tablet' && p.local) show = true;
-
-                    if (show) displayVideo(e.track);
-                });
-
-                // TRACK STOPPED
+    <script>
+        // 1. SETUP
+        var params
