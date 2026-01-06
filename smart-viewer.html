@@ -2,94 +2,92 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.3 - Race Fix</title>
+    <title>CVCH V9.4 - Diagnostics</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        body { margin: 0; overflow: hidden; height: 100vh; font-family: sans-serif; display: flex; align-items: center; justify-content: center; text-align: center; }
-        body.mode-face   { background-color: #001f3f; color: #7FDBFF; } /* BLUE */
-        body.mode-screen { background-color: #111111; color: #2ECC40; } /* GREEN */
-        body.mode-tablet { background-color: #85144b; color: #FF4136; } /* RED */
-        h1 { font-size: 2em; margin-bottom: 10px; } 
+        body { margin: 0; overflow: hidden; height: 100vh; font-family: 'Courier New', monospace; background-color: #111; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: left; }
+        body.mode-face   { border: 10px solid #001f3f; } /* BLUE BORDER */
+        body.mode-tablet { border: 10px solid #85144b; } /* RED BORDER */
+        
+        #ui-layer { background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; width: 80%; max-height: 90vh; overflow-y: auto; }
+        h1 { margin-top: 0; font-size: 1.5em; border-bottom: 1px solid #555; padding-bottom: 10px; }
+        .log-line { margin: 5px 0; border-bottom: 1px solid #333; padding: 2px 0; }
+        .log-error { color: #FF4136; font-weight: bold; }
+        .log-success { color: #2ECC40; }
+        
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; }
-        #ui-layer { position: relative; z-index: 20; background: rgba(0,0,0,0.9); padding: 30px; border-radius: 10px; max-width: 80%; }
-        #status-log { font-family: monospace; text-align: left; margin-top: 10px; color: #aaa; font-size: 0.9em; }
     </style>
 </head>
 <body>
     <div id="ui-layer">
-        <h1 id="main-label">Initializing...</h1>
-        <div id="status-log">Loading...</div>
+        <h1 id="header">System Diagnostics V9.4</h1>
+        <div id="logs"></div>
     </div>
     <div id="container"></div>
 
     <script>
+        const logsDiv = document.getElementById('logs');
+        function log(msg, type='') {
+            const div = document.createElement('div');
+            div.className = `log-line ${type}`;
+            div.innerText = `> ${msg}`;
+            logsDiv.appendChild(div);
+            console.log(msg);
+        }
+
+        // 1. EXTRACT PARAMS
+        log("Script Started.");
         const params = new URLSearchParams(window.location.search);
-        const MODE = params.get('mode'); 
-        const NAME = params.get('name') || 'Participant';
+        const MODE = params.get('mode');
+        const NAME = params.get('name');
         const ROOM_URL = params.get('url');
-        
-        // CONFIRMED KEYWORDS
-        const KEYWORD_FACE = "Logitech";
-        const KEYWORD_TABLET = "OBS"; 
 
-        document.body.classList.add(`mode-${MODE}`);
-        const label = document.getElementById('main-label');
-        const log = document.getElementById('status-log');
-        function logMsg(msg) { log.innerHTML += `<div>> ${msg}</div>`; console.log(msg); }
+        if (MODE) document.body.classList.add(`mode-${MODE}`);
+        log(`Mode: ${MODE || 'UNKNOWN'}`);
+        log(`Room URL: ${ROOM_URL ? 'DETECTED' : 'MISSING (Check AppleScript)'}`);
 
-        if (MODE === 'face') label.innerText = "MONITOR 1 (BLUE)";
-        else if (MODE === 'screen') label.innerText = "MONITOR 2 (GREEN)";
-        else if (MODE === 'tablet') label.innerText = "TABLET (RED)";
+        if (!ROOM_URL) {
+            log("CRITICAL ERROR: No Room URL provided.", "log-error");
+            throw new Error("No URL");
+        }
+
+        // 2. CHECK LIBRARY
+        if (window.DailyIframe) {
+            log("Daily.co Library: LOADED", "log-success");
+        } else {
+            log("CRITICAL ERROR: Daily.co Library NOT loaded. Check Internet.", "log-error");
+        }
 
         async function start() {
-            if (!ROOM_URL) return;
-            
-            // 1. SETUP CALL OBJECT
-            const call = window.DailyIframe.createCallObject({ 
-                dailyConfig: { experimentalChromeVideoMuteLightOff: true } 
-            });
+            try {
+                // 3. DEFINE CALL
+                log("Creating Call Object...");
+                const call = window.DailyIframe.createCallObject({ 
+                    dailyConfig: { experimentalChromeVideoMuteLightOff: true } 
+                });
 
-            // 2. SETUP LISTENERS (BEFORE JOINING) - FIXES RACE CONDITION
-            call.on('joined-meeting', () => logMsg("Joined Meeting. Waiting for video..."));
-            call.on('error', (e) => { label.innerText = "ERROR"; logMsg(`Daily Error: ${e.errorMsg}`); });
-            
-            call.on('track-started', (e) => {
-                const p = e.participant;
-                const track = e.track;
-                logMsg(`Track started: ${track.kind} from ${p.user_name} (${p.local ? 'Local' : 'Remote'})`);
+                // 4. SETUP LISTENERS
+                call.on('joined-meeting', () => {
+                    log("EVENT: Joined Meeting!", "log-success");
+                    document.getElementById('header').innerText = "Active Connection";
+                });
+                call.on('error', (e) => log(`DAILY ERROR: ${e.errorMsg}`, "log-error"));
                 
-                if (MODE === 'tablet' && p.local && track.kind === 'video') display(track);
-                else if (MODE === 'screen' && p.screen && track.kind === 'video' && !p.local) display(track);
-                else if (MODE === 'face' && !p.screen && !p.local && track.kind === 'video') {
-                    if (!p.user_name.includes("Tablet")) display(track);
-                }
-                
-                if (track.kind === 'audio' && !p.local && MODE !== 'tablet') {
-                    const aud = document.createElement('audio');
-                    aud.srcObject = new MediaStream([track]);
-                    aud.autoplay = true;
-                    document.body.appendChild(aud);
-                }
-            });
-
-            // 3. DEVICE SELECTION
-            let vid = false, aud = false;
-            
-            if (MODE !== 'screen') {
-                 try {
-                    // Pre-request permissions
-                    await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                    const devs = await navigator.mediaDevices.enumerateDevices();
-                    const vDevs = devs.filter(d => d.kind === 'videoinput');
+                call.on('track-started', (e) => {
+                    if (e.participant.local) return; // Ignore self initially
+                    log(`Track received: ${e.track.kind} from ${e.participant.user_name}`);
                     
-                    if (MODE === 'face') {
-                        const cam = vDevs.find(d => d.label.includes(KEYWORD_FACE));
-                        if (cam) { vid = cam.deviceId; aud = true; logMsg(`Selected Face Cam: ${cam.label}`); }
-                        else { label.innerText = "CAM MISSING"; logMsg("No Logitech found."); return; }
-                    } 
-                    else if (MODE === 'tablet') {
-                        const cam = vDevs.find(d => d.label.includes(KEYWORD_TABLET));
-                        if (cam) { vid = cam.deviceId; aud = false; logMsg(`Selected Tablet Cam: ${cam.label}`); }
-                        else { label.innerText = "OBS MISSING"; logMsg("No OBS Camera found."); return; }
-                    }
-                 } catch
+                    // Display Logic
+                    if (MODE === 'face' && !e.participant.user_name.includes("Tablet") && e.track.kind === 'video') display(e.track);
+                    else if (MODE === 'screen' && e.participant.screen && e.track.kind === 'video') display(e.track);
+                });
+
+                // 5. DEVICE SELECTION
+                let vid = false, aud = false;
+                if (MODE !== 'screen') {
+                    log("Requesting Camera Access...");
+                    await navigator.mediaDevices.getUserMedia({ video: true }); // Force Prompt
+                    
+                    log("Enumerating Devices...");
+                    const devs = await navigator.mediaDevices.enumerateDevices();
+                    const vDevs = devs.filter(d => d.kind ===
