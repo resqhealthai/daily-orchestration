@@ -2,92 +2,88 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.4 - Diagnostics</title>
+    <title>CVCH V9.5 - High Contrast</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
-        body { margin: 0; overflow: hidden; height: 100vh; font-family: 'Courier New', monospace; background-color: #111; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: left; }
-        body.mode-face   { border: 10px solid #001f3f; } /* BLUE BORDER */
-        body.mode-tablet { border: 10px solid #85144b; } /* RED BORDER */
-        
-        #ui-layer { background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; width: 80%; max-height: 90vh; overflow-y: auto; }
-        h1 { margin-top: 0; font-size: 1.5em; border-bottom: 1px solid #555; padding-bottom: 10px; }
-        .log-line { margin: 5px 0; border-bottom: 1px solid #333; padding: 2px 0; }
-        .log-error { color: #FF4136; font-weight: bold; }
-        .log-success { color: #2ECC40; }
-        
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; }
+        /* FORCE WHITE BACKGROUND, BLACK TEXT */
+        body { 
+            background-color: #FFFFFF !important; 
+            color: #000000 !important; 
+            font-family: monospace; 
+            font-size: 18px; 
+            margin: 20px;
+            overflow: auto; /* Allow scrolling */
+        }
+        #log-container {
+            border: 2px solid red;
+            padding: 20px;
+            background: #eee;
+        }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; font-weight: bold; }
+        h1 { margin-top: 0; }
+        video {
+            position: fixed; bottom: 10px; right: 10px; width: 300px; height: 200px; 
+            border: 5px solid blue; z-index: 100;
+        }
     </style>
 </head>
 <body>
-    <div id="ui-layer">
-        <h1 id="header">System Diagnostics V9.4</h1>
-        <div id="logs"></div>
+
+    <div id="log-container">
+        <h1>V9.5 DIAGNOSTIC LOG</h1>
+        <div id="console-output">Initializing...</div>
     </div>
-    <div id="container"></div>
 
     <script>
-        const logsDiv = document.getElementById('logs');
-        function log(msg, type='') {
+        const out = document.getElementById('console-output');
+        
+        // HELPER: Write to screen immediately
+        function log(msg, type) {
             const div = document.createElement('div');
-            div.className = `log-line ${type}`;
-            div.innerText = `> ${msg}`;
-            logsDiv.appendChild(div);
-            console.log(msg);
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            if (type) div.className = type;
+            out.appendChild(div);
         }
 
-        // 1. EXTRACT PARAMS
-        log("Script Started.");
-        const params = new URLSearchParams(window.location.search);
-        const MODE = params.get('mode');
-        const NAME = params.get('name');
-        const ROOM_URL = params.get('url');
+        // GLOBAL ERROR CATCHER
+        window.onerror = function(message, source, lineno, colno, error) {
+            log(`CRITICAL SYSTEM ERROR: ${message}`, 'error');
+        };
 
-        if (MODE) document.body.classList.add(`mode-${MODE}`);
-        log(`Mode: ${MODE || 'UNKNOWN'}`);
-        log(`Room URL: ${ROOM_URL ? 'DETECTED' : 'MISSING (Check AppleScript)'}`);
+        // STARTUP CHECK
+        try {
+            log("Script started.");
 
-        if (!ROOM_URL) {
-            log("CRITICAL ERROR: No Room URL provided.", "log-error");
-            throw new Error("No URL");
-        }
+            // 1. Check Parameters
+            const params = new URLSearchParams(window.location.search);
+            const MODE = params.get('mode');
+            const URL = params.get('url');
+            log(`Mode detected: ${MODE || 'NONE'}`);
+            log(`URL detected: ${URL ? 'YES' : 'NO'}`);
 
-        // 2. CHECK LIBRARY
-        if (window.DailyIframe) {
-            log("Daily.co Library: LOADED", "log-success");
-        } else {
-            log("CRITICAL ERROR: Daily.co Library NOT loaded. Check Internet.", "log-error");
-        }
+            if (!URL) throw new Error("Missing Room URL in parameters.");
 
-        async function start() {
-            try {
-                // 3. DEFINE CALL
-                log("Creating Call Object...");
-                const call = window.DailyIframe.createCallObject({ 
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true } 
-                });
+            // 2. Check Daily Library
+            if (!window.DailyIframe) {
+                throw new Error("Daily.co Library failed to load. Check Internet Connection.");
+            } else {
+                log("Daily Library loaded successfully.", "success");
+            }
 
-                // 4. SETUP LISTENERS
-                call.on('joined-meeting', () => {
-                    log("EVENT: Joined Meeting!", "log-success");
-                    document.getElementById('header').innerText = "Active Connection";
-                });
-                call.on('error', (e) => log(`DAILY ERROR: ${e.errorMsg}`, "log-error"));
+            // 3. Init Call
+            log("Creating Call Object...");
+            const call = window.DailyIframe.createCallObject({
+                dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+            });
+
+            // 4. Setup Events
+            call.on('joined-meeting', () => log("Successfully Joined Meeting!", "success"));
+            call.on('error', (e) => log(`DailyAPI Error: ${e.errorMsg}`, "error"));
+            call.on('left-meeting', () => log("Left meeting."));
+            
+            call.on('track-started', (e) => {
+                if (e.participant.local) return;
+                log(`Video Track Received from: ${e.participant.user_name}`, "success");
                 
-                call.on('track-started', (e) => {
-                    if (e.participant.local) return; // Ignore self initially
-                    log(`Track received: ${e.track.kind} from ${e.participant.user_name}`);
-                    
-                    // Display Logic
-                    if (MODE === 'face' && !e.participant.user_name.includes("Tablet") && e.track.kind === 'video') display(e.track);
-                    else if (MODE === 'screen' && e.participant.screen && e.track.kind === 'video') display(e.track);
-                });
-
-                // 5. DEVICE SELECTION
-                let vid = false, aud = false;
-                if (MODE !== 'screen') {
-                    log("Requesting Camera Access...");
-                    await navigator.mediaDevices.getUserMedia({ video: true }); // Force Prompt
-                    
-                    log("Enumerating Devices...");
-                    const devs = await navigator.mediaDevices.enumerateDevices();
-                    const vDevs = devs.filter(d => d.kind ===
+                //
