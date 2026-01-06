@@ -2,94 +2,97 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v13.0</title>
+    <title>Smart Viewer v15.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
+        #status { font-size: 24px; font-weight: bold; color: #888; }
         
-        /* THE TRIGGER BUTTON */
-        #launch-btn {
-            font-size: 40px; padding: 20px 50px; background: #2ECC40; color: #fff;
-            border: none; border-radius: 10px; cursor: pointer; z-index: 100;
-            box-shadow: 0 0 20px #2ECC40; animation: pulse 2s infinite;
-        }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-
-        #status { margin-top: 20px; font-size: 20px; color: #888; }
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; display: none; }
+        /* VIDEO LAYOUT - FULL SCREEN */
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
+        
+        /* HIDE SCROLLBARS */
+        ::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body>
 
-    <button id="launch-btn" onclick="startEngine()">LAUNCH SYSTEM</button>
-    <div id="status">WAITING FOR TRIGGER...</div>
-
+    <div id="status">INITIALIZING SYSTEM...</div>
     <div id="container"></div>
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
-        // 1. CONFIG
+        // 1. CONFIGURATION
         var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
+        var MODE = params.get('mode'); // 'face', 'screen', 'tablet'
         var URL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
         var NAME = params.get('name') || "Smart-Viewer";
         
-        var btn = document.getElementById('launch-btn');
         var stat = document.getElementById('status');
         var container = document.getElementById('container');
 
-        // 2. THE ENGINE (Triggered by Click)
-        function startEngine() {
-            btn.style.display = 'none'; // Hide button
-            stat.innerText = "AUTHENTICATING...";
+        // 2. START IMMEDIATELY
+        if (!URL) {
+            stat.innerText = "CONFIG ERROR: No URL Found";
+        } else {
+            initCall();
+        }
+
+        function initCall() {
+            stat.innerText = "CONNECTING...";
             
             try {
-                // CREATE CALL OBJECT (Headless Mode)
+                // CREATE CALL (Headless - No UI)
                 var call = window.DailyIframe.createCallObject({
                     dailyConfig: { 
-                        avoidEval: true,
                         experimentalChromeVideoMuteLightOff: true 
                     }
                 });
 
                 call.on('track-started', handleVideo);
                 call.on('error', (e) => { stat.innerText = "ERROR: " + e.errorMsg; });
-                call.on('joined-meeting', () => { 
-                    stat.style.display = 'none'; // Hide text on success
-                });
+                call.on('joined-meeting', () => { stat.innerText = "WAITING FOR VIDEO..."; });
 
-                // JOIN
-                stat.innerText = "CONNECTING...";
+                // 3. JOIN LOGIC (THE FIX)
+                // Monitors must be PASSIVE (Audio: False, Video: False)
+                // Tablet is ACTIVE (Audio: True, Video: True)
                 
-                // Mode-specific Join settings
-                let settings = { url: URL, userName: NAME };
-                
-                // Ghost/Monitor Mode (No Mic/Cam) to prevent permission blocks
-                if (MODE !== 'tablet') {
-                    settings.audioSource = false;
-                    settings.videoSource = false;
+                let joinOptions = { 
+                    url: URL, 
+                    userName: NAME 
+                };
+
+                if (MODE === 'tablet') {
+                    // TABLET: Active Uplink
+                    joinOptions.audioSource = true;
+                    joinOptions.videoSource = true; 
+                } else {
+                    // MONITORS: Passive Display (CRITICAL FIX)
+                    // We explicitly force false to prevent Hardware Conflict
+                    joinOptions.audioSource = false;
+                    joinOptions.videoSource = false;
                 }
                 
-                call.join(settings).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
+                // EXECUTE JOIN
+                call.join(joinOptions).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
 
             } catch(e) {
                 stat.innerText = "CRASH: " + e.message;
             }
         }
 
-        // 3. VIDEO ROUTER (The Magic Logic)
+        // 4. VIDEO ROUTING
         function handleVideo(e) {
             var p = e.participant;
-            if (p.local) return; // Never show self (unless Tablet loopback needed)
+            if (p.local && MODE !== 'tablet') return; // Hide self unless testing
 
-            // LOGIC: Which stream goes to which monitor?
             var show = false;
 
             if (MODE === 'face') {
-                // Monitor 1: Show Instructor Face (Ignore Screen Shares)
+                // Monitor 1: Show Instructor Face (Ignore Screen Shares & Tablet)
                 if (!p.screen && !p.user_name.includes("Tablet")) show = true;
             } 
             else if (MODE === 'screen') {
@@ -97,20 +100,20 @@
                 if (p.screen) show = true;
             }
             else if (MODE === 'tablet') {
-                // Tablet: Can see whatever (usually Instructor Face)
-                if (!p.screen) show = true;
+                // Tablet: Can see Instructor
+                if (!p.screen && !p.local) show = true;
             }
 
             if (show) {
-                // Remove old video
-                container.innerHTML = ''; 
+                // Clear status text
+                stat.style.display = 'none';
                 
-                // Create new video
+                // Render Video
+                container.innerHTML = ''; 
                 var el = document.createElement('video');
                 el.srcObject = new MediaStream([e.track]);
                 el.autoplay = true; 
                 el.muted = true;
-                el.style.display = 'block';
                 container.appendChild(el);
             }
         }
