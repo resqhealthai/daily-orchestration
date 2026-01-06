@@ -2,84 +2,117 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v12.0</title>
+    <title>Smart Viewer v13.0</title>
     <style>
         body { 
-            background: #000; margin: 0; height: 100vh; 
+            background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
-        .icon { font-size: 80px; display: block; margin-bottom: 20px; }
-        .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; font-weight: bold; }
-        .subtext { font-size: 16px; color: #aaa; margin-top: 15px; }
         
-        /* MODE COLORS */
-        body.mode-face .text   { color: #7FDBFF; }
-        body.mode-screen .text { color: #2ECC40; }
-        body.mode-tablet .text { color: #FF4136; }
+        /* THE TRIGGER BUTTON */
+        #launch-btn {
+            font-size: 40px; padding: 20px 50px; background: #2ECC40; color: #fff;
+            border: none; border-radius: 10px; cursor: pointer; z-index: 100;
+            box-shadow: 0 0 20px #2ECC40; animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+        #status { margin-top: 20px; font-size: 20px; color: #888; }
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; display: none; }
     </style>
 </head>
 <body>
 
-    <div id="content">
-        <div class="icon">🚀</div>
-        <div id="status" class="text">INITIALIZING...</div>
-        <div id="sub" class="subtext">Smart Viewer v12.0</div>
-    </div>
+    <button id="launch-btn" onclick="startEngine()">LAUNCH SYSTEM</button>
+    <div id="status">WAITING FOR TRIGGER...</div>
 
+    <div id="container"></div>
+
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
-        // 1. GET PARAMS
+        // 1. CONFIG
         var params = new URLSearchParams(window.location.search);
         var MODE = params.get('mode');
-        var RAW_URL = params.get('url');
+        var URL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
+        var NAME = params.get('name') || "Smart-Viewer";
         
-        // Clean URL
-        var URL = RAW_URL ? RAW_URL.trim().replace(/"/g, '') : "";
+        var btn = document.getElementById('launch-btn');
+        var stat = document.getElementById('status');
+        var container = document.getElementById('container');
 
-        // 2. SET UI
-        var statusEl = document.getElementById('status');
-        var subEl = document.getElementById('sub');
-        
-        if (MODE) document.body.classList.add('mode-' + MODE);
+        // 2. THE ENGINE (Triggered by Click)
+        function startEngine() {
+            btn.style.display = 'none'; // Hide button
+            stat.innerText = "AUTHENTICATING...";
+            
+            try {
+                // CREATE CALL OBJECT (Headless Mode)
+                var call = window.DailyIframe.createCallObject({
+                    dailyConfig: { 
+                        avoidEval: true,
+                        experimentalChromeVideoMuteLightOff: true 
+                    }
+                });
 
-        if (MODE === 'face') {
-            statusEl.innerText = "CONNECTING TO INSTRUCTOR...";
-        } else if (MODE === 'screen') {
-            statusEl.innerText = "CONNECTING TO SCREEN SHARE...";
-        } else if (MODE === 'tablet') {
-            statusEl.innerText = "PREPARING TABLET UPLINK...";
+                call.on('track-started', handleVideo);
+                call.on('error', (e) => { stat.innerText = "ERROR: " + e.errorMsg; });
+                call.on('joined-meeting', () => { 
+                    stat.style.display = 'none'; // Hide text on success
+                });
+
+                // JOIN
+                stat.innerText = "CONNECTING...";
+                
+                // Mode-specific Join settings
+                let settings = { url: URL, userName: NAME };
+                
+                // Ghost/Monitor Mode (No Mic/Cam) to prevent permission blocks
+                if (MODE !== 'tablet') {
+                    settings.audioSource = false;
+                    settings.videoSource = false;
+                }
+                
+                call.join(settings).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
+
+            } catch(e) {
+                stat.innerText = "CRASH: " + e.message;
+            }
         }
 
-        // 3. EXECUTE HANDOFF
-        function performHandoff() {
-            if (!URL) {
-                statusEl.innerText = "CONFIG ERROR";
-                subEl.innerText = "No URL provided.";
-                return;
+        // 3. VIDEO ROUTER (The Magic Logic)
+        function handleVideo(e) {
+            var p = e.participant;
+            if (p.local) return; // Never show self (unless Tablet loopback needed)
+
+            // LOGIC: Which stream goes to which monitor?
+            var show = false;
+
+            if (MODE === 'face') {
+                // Monitor 1: Show Instructor Face (Ignore Screen Shares)
+                if (!p.screen && !p.user_name.includes("Tablet")) show = true;
+            } 
+            else if (MODE === 'screen') {
+                // Monitor 2: Show Screen Share ONLY
+                if (p.screen) show = true;
+            }
+            else if (MODE === 'tablet') {
+                // Tablet: Can see whatever (usually Instructor Face)
+                if (!p.screen) show = true;
             }
 
-            statusEl.innerText = "JOINING ROOM...";
-            subEl.innerText = "Redirecting to secure video feed...";
-            
-            // THE FIX: Direct Browser Redirect (Matches your Manual Test)
-            window.location.replace(URL);
-        }
-
-        // 4. TIMING LOGIC
-        if (MODE === 'tablet') {
-            // Tablet waits 8 seconds to prevent camera resource fighting
-            var countdown = 8;
-            var timer = setInterval(function() {
-                subEl.innerText = "Launching in " + countdown + "s...";
-                countdown--;
-                if (countdown < 0) {
-                    clearInterval(timer);
-                    performHandoff();
-                }
-            }, 1000);
-        } else {
-            // Monitors launch instantly
-            performHandoff();
+            if (show) {
+                // Remove old video
+                container.innerHTML = ''; 
+                
+                // Create new video
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; 
+                el.muted = true;
+                el.style.display = 'block';
+                container.appendChild(el);
+            }
         }
     </script>
 </body>
