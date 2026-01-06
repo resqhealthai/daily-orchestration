@@ -2,95 +2,75 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v15.0</title>
+    <title>Smart Viewer v15.1</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
-        #status { font-size: 24px; font-weight: bold; color: #888; }
-        
-        /* VIDEO LAYOUT - FULL SCREEN */
+        #status { font-size: 24px; font-weight: bold; color: #666; }
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
-        
-        /* HIDE SCROLLBARS */
-        ::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body>
 
-    <div id="status">INITIALIZING SYSTEM...</div>
+    <div id="status">INITIALIZING V15.1...</div>
     <div id="container"></div>
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
-        // 1. CONFIGURATION
         var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode'); // 'face', 'screen', 'tablet'
+        var MODE = params.get('mode');
         var URL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
         var NAME = params.get('name') || "Smart-Viewer";
         
         var stat = document.getElementById('status');
         var container = document.getElementById('container');
 
-        // 2. START IMMEDIATELY
-        if (!URL) {
-            stat.innerText = "CONFIG ERROR: No URL Found";
-        } else {
-            initCall();
-        }
+        if (!URL) { stat.innerText = "NO URL"; } else { init(); }
 
-        function initCall() {
+        function init() {
             stat.innerText = "CONNECTING...";
-            
             try {
-                // CREATE CALL (Headless - No UI)
-                var call = window.DailyIframe.createCallObject({
+                // 1. DETERMINE ROLES
+                let isTablet = (MODE === 'tablet');
+
+                // 2. CREATE CALL
+                // If we are a Monitor, we disable input devices at the factory level
+                var callOptions = {
                     dailyConfig: { 
                         experimentalChromeVideoMuteLightOff: true 
                     }
-                });
-
-                call.on('track-started', handleVideo);
-                call.on('error', (e) => { stat.innerText = "ERROR: " + e.errorMsg; });
-                call.on('joined-meeting', () => { stat.innerText = "WAITING FOR VIDEO..."; });
-
-                // 3. JOIN LOGIC (THE FIX)
-                // Monitors must be PASSIVE (Audio: False, Video: False)
-                // Tablet is ACTIVE (Audio: True, Video: True)
-                
-                let joinOptions = { 
-                    url: URL, 
-                    userName: NAME 
                 };
 
-                if (MODE === 'tablet') {
-                    // TABLET: Active Uplink
-                    joinOptions.audioSource = true;
-                    joinOptions.videoSource = true; 
-                } else {
-                    // MONITORS: Passive Display (CRITICAL FIX)
-                    // We explicitly force false to prevent Hardware Conflict
-                    joinOptions.audioSource = false;
-                    joinOptions.videoSource = false;
-                }
-                
-                // EXECUTE JOIN
-                call.join(joinOptions).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
+                var call = window.DailyIframe.createCallObject(callOptions);
 
-            } catch(e) {
-                stat.innerText = "CRASH: " + e.message;
-            }
+                call.on('track-started', handleVideo);
+                call.on('error', (e) => { stat.innerText = "ERR: " + e.errorMsg; });
+                call.on('joined-meeting', () => { stat.innerText = "WAITING FOR VIDEO..."; });
+
+                // 3. JOIN (THE FIX)
+                // Monitors explicitly join with audio/video FALSE.
+                // This prevents Safari from grabbing the Logitech cam.
+                
+                call.join({ 
+                    url: URL, 
+                    userName: NAME,
+                    audioSource: isTablet ? true : false, 
+                    videoSource: isTablet ? true : false
+                }).catch(e => { stat.innerText = "FAIL: " + e; });
+
+            } catch(e) { stat.innerText = "CRASH: " + e.message; }
         }
 
-        // 4. VIDEO ROUTING
         function handleVideo(e) {
             var p = e.participant;
-            if (p.local && MODE !== 'tablet') return; // Hide self unless testing
+            // Hide own camera (unless testing)
+            if (p.local && MODE !== 'tablet') return; 
 
             var show = false;
-
+            // ROUTING LOGIC
             if (MODE === 'face') {
                 // Monitor 1: Show Instructor Face (Ignore Screen Shares & Tablet)
                 if (!p.screen && !p.user_name.includes("Tablet")) show = true;
@@ -100,20 +80,16 @@
                 if (p.screen) show = true;
             }
             else if (MODE === 'tablet') {
-                // Tablet: Can see Instructor
+                // Tablet: Show everything (Testing/Monitoring)
                 if (!p.screen && !p.local) show = true;
             }
 
             if (show) {
-                // Clear status text
                 stat.style.display = 'none';
-                
-                // Render Video
                 container.innerHTML = ''; 
                 var el = document.createElement('video');
                 el.srcObject = new MediaStream([e.track]);
-                el.autoplay = true; 
-                el.muted = true;
+                el.autoplay = true; el.muted = true;
                 container.appendChild(el);
             }
         }
