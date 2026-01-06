@@ -2,194 +2,81 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v11.7</title>
+    <title>Vanilla Test v11.8</title>
     <style>
         body { 
-            background: #000; margin: 0; overflow: hidden; height: 100vh; 
+            background: #222; margin: 0; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            font-family: sans-serif; color: white;
+            font-family: monospace; color: #0f0; font-size: 18px;
         }
-        
-        /* DEBUG BAR - Shows URL and Status at top */
-        #mode-debug {
-            position: absolute; top: 0; left: 0; right: 0;
-            background: #F1C40F; color: #000; font-weight: bold; font-size: 16px;
-            padding: 15px; text-align: center; z-index: 1000;
-            white-space: pre-wrap; word-break: break-all;
+        #log {
+            width: 80%; height: 300px; background: #000; border: 2px solid #0f0;
+            padding: 20px; overflow-y: scroll; white-space: pre-wrap;
         }
-
-        #placeholder { z-index: 5; text-align: center; margin-top: 80px; }
-        .icon { font-size: 80px; display: block; margin-bottom: 10px; }
-        .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
-        .subtext { font-size: 14px; color: #888; margin-top: 10px; }
-        
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
 </head>
 <body>
 
-    <div id="mode-debug">HTML LOADED</div>
-
-    <div id="placeholder">
-        <span id="icon" class="icon">⏳</span>
-        <div id="status-text" class="text">SYSTEM LOADING</div>
-        <div id="sub-text" class="subtext">Smart Viewer v11.7</div>
-    </div>
-
-    <div id="container"></div>
+    <h1>VANILLA CONNECT TEST (v11.8)</h1>
+    <div id="log">Initializing...</div>
 
     <script>
-        // 1. LOGGING UTILS
-        var debug = document.getElementById('mode-debug');
-        
-        function updateLog(msg) {
-            debug.innerText = msg;
+        var log = document.getElementById('log');
+        function print(msg) {
+            log.innerText += "\n" + msg;
             console.log(msg);
         }
 
-        window.onerror = function(msg, url, line) {
-            debug.style.background = "red";
-            debug.style.color = "white";
-            debug.innerText = "CRASH: " + msg;
-        };
-
-        // 2. PARAMS & URL CLEANING
+        // 1. GET URL
         var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
-        var RAW_URL = params.get('url');
-        var NAME = params.get('name');
+        var URL = params.get('url');
         
-        // Safety: Trim whitespace and quotes from URL
-        var URL = RAW_URL ? RAW_URL.trim().replace(/"/g, '') : "";
-
-        if (MODE) document.body.classList.add('mode-' + MODE);
-
-        // 3. UI SETUP
-        var icon = document.getElementById('icon');
-        var txt = document.getElementById('status-text');
-        var sub = document.getElementById('sub-text');
-        var ph = document.getElementById('placeholder');
-
-        function setUI() {
-            if (MODE === 'face') {
-                icon.innerText = "👤"; txt.innerText = "WAITING FOR INSTRUCTOR";
-            } else if (MODE === 'screen') {
-                icon.innerText = "🖥️"; txt.innerText = "WAITING FOR SCREEN SHARE";
-            } else if (MODE === 'tablet') {
-                icon.innerText = "📡"; txt.innerText = "TABLET UPLINK ACTIVE";
-            }
-        }
-        setUI();
-
-        // 4. LOAD DAILY LIBRARY
-        function loadLib() {
-            var s = document.createElement('script');
-            s.src = "https://unpkg.com/@daily-co/daily-js";
-            s.async = true;
-            s.onload = function() { startApp(); };
-            s.onerror = function() { 
-                updateLog("FAIL: Could not load Daily JS Library"); 
-            };
-            document.head.appendChild(s);
+        if (URL) {
+            // Clean cleanup just in case
+            URL = URL.trim().replace(/"/g, '');
         }
 
-        // 5. MAIN LOGIC
-        function startApp() {
-            // DIAGNOSTIC: Show the exact URL we are trying to hit
-            updateLog("TARGET: " + URL);
-            
-            if (!URL || URL === "undefined") {
-                updateLog("ERROR: INVALID URL (Check JSON Config)");
-                return;
-            }
+        print("TARGET URL: " + URL);
 
-            // Stagger start time for Tablet to prevent camera conflict
-            if (MODE === 'tablet') {
-                setTimeout(initCall, 8000);
-            } else {
-                initCall();
-            }
-        }
+        // 2. LOAD SCRIPT
+        var s = document.createElement('script');
+        s.src = "https://unpkg.com/@daily-co/daily-js";
+        s.async = true;
+        s.onload = function() { 
+            print("LIBRARY LOADED. CREATING CALL...");
+            runTest(); 
+        };
+        document.head.appendChild(s);
 
-        function initCall() {
+        function runTest() {
+            // BARE BONES CONFIG - No Experimental Flags, No Device Enumeration
             try {
-                var call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-                });
-
-                // VIDEO RECEIVED
-                call.on('track-started', function(e) {
-                    if (e.track.kind === 'video') handleVideo(e);
+                var call = window.DailyIframe.createCallObject();
+                
+                call.on('joined-meeting', function() {
+                    print(">>> SUCCESS! WE ARE INSIDE THE ROOM! <<<");
+                    document.body.style.background = "green";
+                    document.body.style.color = "white";
                 });
                 
-                // STATUS UPDATES
-                call.on('error', function(e) { updateLog("DAILY ERROR: " + e.errorMsg); });
-                call.on('joined-meeting', function(e) { updateLog("SUCCESS: JOINED ROOM!"); });
+                call.on('error', function(e) {
+                    print("ERROR: " + JSON.stringify(e));
+                });
 
-                // DEVICE SELECTION & JOIN
-                if (MODE !== 'screen') {
-                    navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(function() { return navigator.mediaDevices.enumerateDevices(); })
-                    .then(function(devs) {
-                        var vDevs = devs.filter(function(d) { return d.kind === 'videoinput'; });
-                        var key = (MODE === 'face') ? "Logitech" : "OBS";
-                        var target = vDevs.find(function(d) { return d.label.includes(key); });
-                        var vid = target ? target.deviceId : true;
-                        
-                        doJoin(call, vid, (MODE === 'face'));
-                    })
-                    .catch(function(err) {
-                        // If specific cam fails, try default
-                        doJoin(call, true, (MODE === 'face')); 
-                    });
-                } else {
-                    doJoin(call, false, false);
-                }
+                print("ATTEMPTING JOIN (15s Timeout)...");
+                
+                call.join({ url: URL, userName: "Vanilla-Test" })
+                .then(function() {
+                    print("JOIN PROMISE RETURNED (Waiting for event...)");
+                })
+                .catch(function(e) {
+                    print("JOIN FAILED: " + e);
+                });
 
             } catch(e) {
-                updateLog("INIT CRASH: " + e.message);
+                print("CRASH: " + e.message);
             }
         }
-
-        function doJoin(call, vid, aud) {
-            updateLog("ATTEMPTING JOIN: " + URL);
-            
-            // TIMEOUT TRAP: If not joined in 15 seconds, warn user.
-            var joinTimeout = setTimeout(function() {
-                updateLog("TIMEOUT: Connection hanged. Firewall blocking WebRTC?");
-            }, 15000);
-
-            call.join({ url: URL, userName: NAME, videoSource: vid, audioSource: aud })
-            .then(function() {
-                clearTimeout(joinTimeout);
-                if (MODE === 'tablet' && vid) call.setLocalVideo(true);
-            })
-            .catch(function(e) {
-                clearTimeout(joinTimeout);
-                updateLog("JOIN FAILED: " + e);
-            });
-        }
-
-        function handleVideo(e) {
-            var p = e.participant;
-            var show = false;
-            // Mode-specific filtering rules
-            if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
-            if (MODE === 'screen' && !p.local && p.screen) show = true;
-            if (MODE === 'tablet' && p.local) show = true;
-
-            if (show) {
-                var c = document.getElementById('container');
-                c.innerHTML = '';
-                var el = document.createElement('video');
-                el.srcObject = new MediaStream([e.track]);
-                el.autoplay = true; el.muted = true;
-                c.appendChild(el);
-                ph.style.opacity = '0';
-            }
-        }
-
-        loadLib();
     </script>
 </body>
 </html>
