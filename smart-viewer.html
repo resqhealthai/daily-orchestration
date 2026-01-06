@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V11.2 - Mode Check</title>
+    <title>CVCH V11.3 - Compatibility</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -10,14 +10,14 @@
             font-family: sans-serif; color: white;
         }
         
-        /* MODE DEBUG LABEL */
+        /* YELLOW DEBUG BAR */
         #mode-debug {
             position: absolute; top: 0; left: 0; right: 0;
             background: #F1C40F; color: #000; font-weight: bold; font-size: 20px;
             padding: 10px; text-align: center; z-index: 1000;
         }
 
-        /* GRAPHIC */
+        /* CENTER GRAPHIC */
         #placeholder { z-index: 5; text-align: center; margin-top: 50px; }
         .icon { font-size: 80px; display: block; margin-bottom: 10px; }
         .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
@@ -39,37 +39,45 @@
     <div id="placeholder">
         <span id="icon" class="icon">⏳</span>
         <div id="status-text" class="text">LOADING...</div>
-        <div id="sub-text" class="subtext">V11.2</div>
+        <div id="sub-text" class="subtext">V11.3 Compatibility</div>
         <div id="error-box" class="error-msg" style="display:none;"></div>
     </div>
 
     <div id="container"></div>
 
     <script>
-        // 1. CRASH TRAP
-        window.onerror = (msg, src, line) => {
-            document.getElementById('error-box').style.display = 'block';
-            document.getElementById('error-box').innerText = `CRASH: ${msg} (Line ${line})`;
+        // --- 1. INSTANT LIFE CHECK ---
+        var debugBar = document.getElementById('mode-debug');
+        debugBar.innerText = "JS STARTED (Loading Logic...)";
+
+        // --- 2. GLOBAL ERROR HANDLER ---
+        window.onerror = function(msg, src, line) {
+            var box = document.getElementById('error-box');
+            box.style.display = 'block';
+            box.innerText = "CRASH: " + msg + " (Line " + line + ")";
+            debugBar.innerText = "SYSTEM FAILURE";
         };
 
-        // 2. CONFIG
-        const params = new URLSearchParams(window.location.search);
-        const MODE = params.get('mode');
-        const URL = params.get('url');
-        const NAME = params.get('name');
-        
-        // UPDATE DEBUG BAR
-        const debug = document.getElementById('mode-debug');
-        debug.innerText = `CURRENT MODE: ${MODE ? MODE.toUpperCase() : 'UNDEFINED'}`;
-        if (MODE) document.body.classList.add('mode-' + MODE);
+        // --- 3. PARAMETER EXTRACTION ---
+        var params = new URLSearchParams(window.location.search);
+        var MODE = params.get('mode');
+        var URL = params.get('url');
+        var NAME = params.get('name');
 
-        // UI ELEMENTS
-        const icon = document.getElementById('icon');
-        const txt = document.getElementById('status-text');
-        const sub = document.getElementById('sub-text');
-        const ph = document.getElementById('placeholder');
+        // Update Debug Bar with Mode
+        if (MODE) {
+            debugBar.innerText = "CURRENT MODE: " + MODE.toUpperCase();
+            document.body.classList.add('mode-' + MODE);
+        } else {
+            debugBar.innerText = "ERROR: NO MODE DETECTED";
+        }
 
-        // 3. SET UI TEXT
+        // --- 4. UI SETUP ---
+        var icon = document.getElementById('icon');
+        var txt = document.getElementById('status-text');
+        var sub = document.getElementById('sub-text');
+        var ph = document.getElementById('placeholder');
+
         function setUI() {
             if (MODE === 'face') {
                 icon.innerText = "👤";
@@ -85,41 +93,44 @@
                 sub.innerText = "Do not minimize this window";
             } else {
                 txt.innerText = "MODE ERROR";
-                sub.innerText = "Check AppleScript URL";
+                sub.innerText = "Check AppleScript URL Generation";
             }
         }
         setUI();
 
-        // 4. LOAD LIBRARY
+        // --- 5. LOAD LIBRARY ---
         function loadLib() {
-            const s = document.createElement('script');
+            var s = document.createElement('script');
             s.src = "https://unpkg.com/@daily-co/daily-js";
             s.async = true;
-            s.onload = () => runApp();
-            s.onerror = () => { txt.innerText = "NETWORK ERROR"; };
+            s.onload = function() { runApp(); };
+            s.onerror = function() { txt.innerText = "NETWORK ERROR"; sub.innerText = "Could not load Daily.co library"; };
             document.head.appendChild(s);
         }
 
-        // 5. APP LOGIC
+        // --- 6. MAIN APP LOGIC ---
         async function runApp() {
             try {
-                if (!URL) throw new Error("Missing URL");
+                if (!URL) throw new Error("Missing Room URL");
 
+                // Tablet Delay (Using Promise wrapper for older browser safety)
                 if (MODE === 'tablet') {
                     sub.innerText = "Yielding to Face Cam (8s)...";
-                    await new Promise(r => setTimeout(r, 8000));
+                    await new Promise(function(resolve) { setTimeout(resolve, 8000); });
                     sub.innerText = "Connecting...";
                 }
 
-                const call = window.DailyIframe.createCallObject({
+                var call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
-                call.on('track-started', (e) => {
+                // TRACK STARTED
+                call.on('track-started', function(e) {
                     if (e.track.kind !== 'video') return;
-                    const p = e.participant;
-                    let show = false;
+                    var p = e.participant;
+                    var show = false;
 
+                    // STRICT FILTERING RULES
                     if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
                     if (MODE === 'screen' && !p.local && p.screen) show = true;
                     if (MODE === 'tablet' && p.local) show = true;
@@ -127,21 +138,4 @@
                     if (show) displayVideo(e.track);
                 });
 
-                call.on('track-stopped', () => {
-                   setTimeout(() => {
-                       const v = document.querySelector('video');
-                       if (v && v.srcObject && v.srcObject.getVideoTracks()[0].readyState === 'ended') clearVideo();
-                   }, 500);
-                });
-
-                // DEVICE HUNT
-                let vid = false, aud = false;
-                if (MODE !== 'screen') {
-                    try {
-                        await navigator.mediaDevices.getUserMedia({ video: true });
-                        const devs = await navigator.mediaDevices.enumerateDevices();
-                        const vDevs = devs.filter(d => d.kind === 'videoinput');
-                        const key = (MODE === 'face') ? "Logitech" : "OBS";
-                        const target = vDevs.find(d => d.label.includes(key));
-                        if (target) { vid = target.deviceId; aud = (MODE==='face'); }
-                        else vid = true;
+                // TRACK STOPPED
