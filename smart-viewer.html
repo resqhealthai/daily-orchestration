@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v15.1</title>
+    <title>Smart Viewer v15.2</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -15,20 +15,21 @@
 </head>
 <body>
 
-    <div id="status">INITIALIZING V15.1...</div>
+    <div id="status">INITIALIZING V15.2...</div>
     <div id="container"></div>
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
         var params = new URLSearchParams(window.location.search);
         var MODE = params.get('mode');
-        var URL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
+        // FIX: Renamed variable from 'URL' to 'targetURL' to avoid overwriting global constructor
+        var targetURL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
         var NAME = params.get('name') || "Smart-Viewer";
         
         var stat = document.getElementById('status');
         var container = document.getElementById('container');
 
-        if (!URL) { stat.innerText = "NO URL"; } else { init(); }
+        if (!targetURL) { stat.innerText = "NO URL"; } else { init(); }
 
         function init() {
             stat.innerText = "CONNECTING...";
@@ -37,7 +38,6 @@
                 let isTablet = (MODE === 'tablet');
 
                 // 2. CREATE CALL
-                // If we are a Monitor, we disable input devices at the factory level
                 var callOptions = {
                     dailyConfig: { 
                         experimentalChromeVideoMuteLightOff: true 
@@ -50,12 +50,11 @@
                 call.on('error', (e) => { stat.innerText = "ERR: " + e.errorMsg; });
                 call.on('joined-meeting', () => { stat.innerText = "WAITING FOR VIDEO..."; });
 
-                // 3. JOIN (THE FIX)
+                // 3. JOIN
                 // Monitors explicitly join with audio/video FALSE.
-                // This prevents Safari from grabbing the Logitech cam.
                 
                 call.join({ 
-                    url: URL, 
+                    url: targetURL, 
                     userName: NAME,
                     audioSource: isTablet ? true : false, 
                     videoSource: isTablet ? true : false
@@ -66,21 +65,17 @@
 
         function handleVideo(e) {
             var p = e.participant;
-            // Hide own camera (unless testing)
             if (p.local && MODE !== 'tablet') return; 
 
             var show = false;
             // ROUTING LOGIC
             if (MODE === 'face') {
-                // Monitor 1: Show Instructor Face (Ignore Screen Shares & Tablet)
                 if (!p.screen && !p.user_name.includes("Tablet")) show = true;
             } 
             else if (MODE === 'screen') {
-                // Monitor 2: Show Screen Share ONLY
                 if (p.screen) show = true;
             }
             else if (MODE === 'tablet') {
-                // Tablet: Show everything (Testing/Monitoring)
                 if (!p.screen && !p.local) show = true;
             }
 
