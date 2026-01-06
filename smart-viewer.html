@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V11.0 - Graphics UI</title>
+    <title>CVCH V11.1 - Debug UI</title>
     <style>
-        /* BASE STYLES */
         body { 
             background: #000; 
             margin: 0; 
@@ -13,110 +12,103 @@
             display: flex; 
             align-items: center; 
             justify-content: center;
-            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-family: sans-serif;
             color: white;
         }
 
-        /* VIDEO LAYER (Initially Hidden) */
-        video { 
-            position: absolute; 
-            top: 0; left: 0; width: 100%; height: 100%; 
-            object-fit: contain; 
-            z-index: 10; 
-            background: black; /* Fills gaps if aspect ratio differs */
-        }
-
-        /* WAITING GRAPHIC LAYER */
+        /* DEFAULT GRAPHIC (INITIALIZING) */
         #placeholder {
             z-index: 5;
             text-align: center;
-            opacity: 0.8;
-            transition: opacity 0.5s;
         }
-        .icon { font-size: 80px; margin-bottom: 20px; display: block; }
-        .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; font-weight: 300; }
+        .icon { font-size: 80px; display: block; margin-bottom: 10px; }
+        .text { font-size: 24px; letter-spacing: 2px; text-transform: uppercase; }
         .subtext { font-size: 14px; color: #888; margin-top: 10px; }
+        .error-msg { color: #FF4136; font-family: monospace; background: #333; padding: 10px; margin-top: 20px; border-radius: 5px; }
 
-        /* MODE SPECIFIC COLORS (For Borders/Backgrounds) */
-        body.mode-face #placeholder   { color: #7FDBFF; } /* Blue Text */
-        body.mode-screen #placeholder { color: #2ECC40; } /* Green Text */
-        body.mode-tablet #placeholder { color: #FF4136; } /* Red Text */
+        /* MODE COLORS */
+        body.mode-face #placeholder   { color: #7FDBFF; }
+        body.mode-screen #placeholder { color: #2ECC40; }
+        body.mode-tablet #placeholder { color: #FF4136; }
 
-        /* LOGGING OVERLAY (Small, Top Left) */
-        #console {
-            position: absolute; top: 10px; left: 10px;
-            font-family: monospace; font-size: 12px; color: #555;
-            z-index: 100; pointer-events: none;
+        video { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            object-fit: contain; z-index: 10; background: black; 
         }
     </style>
 </head>
 <body>
 
     <div id="placeholder">
-        <span id="icon" class="icon">⏳</span>
+        <span id="icon" class="icon">⚠️</span>
         <div id="status-text" class="text">INITIALIZING...</div>
-        <div id="sub-text" class="subtext">V11.0</div>
+        <div id="sub-text" class="subtext">V11.1 Loading Script</div>
+        <div id="error-box" class="error-msg" style="display:none;"></div>
     </div>
 
     <div id="container"></div>
 
-    <div id="console"></div>
-
     <script>
-        // === CONFIGURATION ===
-        const con = document.getElementById('console');
-        const ph = document.getElementById('placeholder');
-        const icon = document.getElementById('icon');
-        const txt = document.getElementById('status-text');
-        const sub = document.getElementById('sub-text');
+        // === 1. CRASH CATCHER (Must be first) ===
+        window.onerror = function(msg, source, lineno) {
+            const box = document.getElementById('error-box');
+            box.style.display = 'block';
+            box.innerText = "JS CRASH: " + msg + " (Line " + lineno + ")";
+            document.getElementById('status-text').innerText = "SYSTEM FAILURE";
+        };
 
-        function log(msg) {
-            con.innerText = `> ${msg}`;
-            console.log(msg);
-        }
-
-        // === 1. SETUP UI BASED ON MODE ===
+        // === 2. CONFIGURATION ===
         const params = new URLSearchParams(window.location.search);
         const MODE = params.get('mode');
         const NAME = params.get('name');
         const URL = params.get('url');
 
-        document.body.classList.add(`mode-${MODE}`);
+        // Apply Mode Class
+        if (MODE) document.body.classList.add('mode-' + MODE);
 
-        function updatePlaceholder() {
+        // UI Elements
+        const icon = document.getElementById('icon');
+        const txt = document.getElementById('status-text');
+        const sub = document.getElementById('sub-text');
+        const ph = document.getElementById('placeholder');
+
+        // === 3. UPDATE UI (Initial State) ===
+        function setUI() {
             if (MODE === 'face') {
                 icon.innerText = "👤";
-                txt.innerText = "Waiting for Instructor";
+                txt.innerText = "WAITING FOR INSTRUCTOR";
                 sub.innerText = "Monitor 1";
             } else if (MODE === 'screen') {
                 icon.innerText = "🖥️";
-                txt.innerText = "Waiting for Screen Share";
+                txt.innerText = "WAITING FOR SCREEN SHARE";
                 sub.innerText = "Monitor 2";
             } else if (MODE === 'tablet') {
                 icon.innerText = "📡";
-                txt.innerText = "Tablet Uplink Active";
+                txt.innerText = "TABLET UPLINK ACTIVE";
                 sub.innerText = "Sending Video...";
             }
         }
-        updatePlaceholder(); // Set initial state
+        setUI(); // Run immediately
 
-        // === 2. LOAD LIBRARY ===
+        // === 4. LOAD LIBRARY ===
         function loadLib() {
             const script = document.createElement('script');
             script.src = "https://unpkg.com/@daily-co/daily-js";
             script.async = true;
             script.onload = () => runApp();
-            script.onerror = () => { txt.innerText = "NETWORK ERROR"; sub.innerText = "Check Internet"; };
+            script.onerror = () => { txt.innerText = "NETWORK ERROR"; sub.innerText = "Blocked by Firewall?"; };
             document.head.appendChild(script);
         }
 
-        // === 3. MAIN APP ===
+        // === 5. MAIN APP ===
         async function runApp() {
             try {
+                if (!URL) throw new Error("Missing Room URL");
+
+                // Tablet Delay
                 if (MODE === 'tablet') {
-                    // Stagger logic preserved for Tablet
                     sub.innerText = "Yielding to Face Cam (8s)...";
-                    await new Promise(r => setTimeout(r, 8000));
+                    await new Promise(function(resolve) { setTimeout(resolve, 8000); });
                     sub.innerText = "Connecting...";
                 }
 
@@ -124,42 +116,32 @@
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
-                // --- TRACK HANDLERS (Video ON/OFF Logic) ---
-                
-                // A. Video Started
-                call.on('track-started', (e) => {
+                // TRACK STARTED
+                call.on('track-started', function(e) {
                     if (e.track.kind !== 'video') return;
                     const p = e.participant;
                     
-                    if (shouldShow(p)) {
-                        log(`SHOWING: ${p.user_name}`);
+                    let show = false;
+                    if (MODE === 'face' && !p.local && !p.screen && !p.user_name.includes("Tablet")) show = true;
+                    if (MODE === 'screen' && !p.local && p.screen) show = true;
+                    if (MODE === 'tablet' && p.local) show = true;
+
+                    if (show) {
                         displayVideo(e.track);
                     }
                 });
 
-                // B. Video Stopped (Crucial for Screen Share ending)
-                call.on('track-stopped', (e) => {
-                    // Check if the track that stopped is the one we were showing
-                    // Simple logic: If we have a video element, check if it's dead
-                    setTimeout(() => {
-                        const videoEl = document.querySelector('video');
-                        // If track is muted or removed, revert to placeholder
-                        if (videoEl && videoEl.srcObject.getVideoTracks()[0].readyState === 'ended') {
-                            log("Video Ended. Reverting to Placeholder.");
+                // TRACK STOPPED
+                call.on('track-stopped', function(e) {
+                    setTimeout(function() {
+                        const v = document.querySelector('video');
+                        if (v && v.srcObject && v.srcObject.getVideoTracks()[0].readyState === 'ended') {
                             clearVideo();
                         }
                     }, 500);
                 });
-                
-                // Also listen for participant-left to clear screen
-                call.on('participant-left', (e) => {
-                    // If the current video belongs to the person who left, clear it
-                    // (Simplification: Just clear video on any leave to force refresh/check)
-                    // Better: We rely on track-stopped, but this is a fallback.
-                });
 
-
-                // --- DEVICE & JOIN ---
+                // DEVICE SELECTION
                 let vid = false;
                 let aud = false;
 
@@ -167,12 +149,49 @@
                     try {
                         await navigator.mediaDevices.getUserMedia({ video: true });
                         const devs = await navigator.mediaDevices.enumerateDevices();
-                        const vDevs = devs.filter(d => d.kind === 'videoinput');
+                        const vDevs = devs.filter(function(d) { return d.kind === 'videoinput'; });
+                        
                         const keyword = (MODE === 'face') ? "Logitech" : "OBS";
-                        const target = vDevs.find(d => d.label.includes(keyword));
+                        const target = vDevs.find(function(d) { return d.label.includes(keyword); });
 
                         if (target) {
                             vid = target.deviceId;
                             aud = (MODE === 'face');
                         } else {
-                            log(`${keyword} not found. Using Default.`);
+                            vid = true; // Fallback
+                        }
+                    } catch(e) { console.log(e); }
+                }
+
+                await call.join({ url: URL, userName: NAME, videoSource: vid, audioSource: aud });
+                
+                if (MODE === 'tablet' && vid) call.setLocalVideo(true);
+
+            } catch(e) {
+                txt.innerText = "APP CRASH";
+                sub.innerText = e.message;
+            }
+        }
+
+        // HELPERS
+        function displayVideo(track) {
+            const c = document.getElementById('container');
+            c.innerHTML = '';
+            const el = document.createElement('video');
+            el.srcObject = new MediaStream([track]);
+            el.autoplay = true; el.muted = true;
+            c.appendChild(el);
+            ph.style.opacity = '0';
+        }
+
+        function clearVideo() {
+            document.getElementById('container').innerHTML = '';
+            ph.style.opacity = '1';
+        }
+
+        // START
+        loadLib();
+
+    </script>
+</body>
+</html>
