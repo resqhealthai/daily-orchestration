@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CVCH V9.2 - Device Auditor</title>
+    <title>CVCH V9.3 - Race Fix</title>
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         body { margin: 0; overflow: hidden; height: 100vh; font-family: sans-serif; display: flex; align-items: center; justify-content: center; text-align: center; }
@@ -12,15 +12,13 @@
         h1 { font-size: 2em; margin-bottom: 10px; } 
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; }
         #ui-layer { position: relative; z-index: 20; background: rgba(0,0,0,0.9); padding: 30px; border-radius: 10px; max-width: 80%; }
-        ul { text-align: left; font-family: monospace; font-size: 1.2em; background: #333; padding: 15px; border-radius: 5px; list-style: none; }
-        li { padding: 5px; border-bottom: 1px solid #555; }
-        li.match { color: #2ECC40; font-weight: bold; }
+        #status-log { font-family: monospace; text-align: left; margin-top: 10px; color: #aaa; font-size: 0.9em; }
     </style>
 </head>
 <body>
     <div id="ui-layer">
         <h1 id="main-label">Initializing...</h1>
-        <div id="device-list">Scanning devices...</div>
+        <div id="status-log">Loading...</div>
     </div>
     <div id="container"></div>
 
@@ -30,109 +28,68 @@
         const NAME = params.get('name') || 'Participant';
         const ROOM_URL = params.get('url');
         
-        // --- CURRENT KEYWORDS (WE WILL ADJUST THESE BASED ON WHAT YOU SEE) ---
+        // CONFIRMED KEYWORDS
         const KEYWORD_FACE = "Logitech";
         const KEYWORD_TABLET = "OBS"; 
 
         document.body.classList.add(`mode-${MODE}`);
         const label = document.getElementById('main-label');
-        const devList = document.getElementById('device-list');
+        const log = document.getElementById('status-log');
+        function logMsg(msg) { log.innerHTML += `<div>> ${msg}</div>`; console.log(msg); }
 
-        if (MODE === 'face') label.innerText = "MONITOR 1 (Audit Mode)";
+        if (MODE === 'face') label.innerText = "MONITOR 1 (BLUE)";
         else if (MODE === 'screen') label.innerText = "MONITOR 2 (GREEN)";
-        else if (MODE === 'tablet') label.innerText = "TABLET (Audit Mode)";
+        else if (MODE === 'tablet') label.innerText = "TABLET (RED)";
 
         async function start() {
             if (!ROOM_URL) return;
+            
+            // 1. SETUP CALL OBJECT
+            const call = window.DailyIframe.createCallObject({ 
+                dailyConfig: { experimentalChromeVideoMuteLightOff: true } 
+            });
 
-            // 1. AUDIT DEVICES
+            // 2. SETUP LISTENERS (BEFORE JOINING) - FIXES RACE CONDITION
+            call.on('joined-meeting', () => logMsg("Joined Meeting. Waiting for video..."));
+            call.on('error', (e) => { label.innerText = "ERROR"; logMsg(`Daily Error: ${e.errorMsg}`); });
+            
+            call.on('track-started', (e) => {
+                const p = e.participant;
+                const track = e.track;
+                logMsg(`Track started: ${track.kind} from ${p.user_name} (${p.local ? 'Local' : 'Remote'})`);
+                
+                if (MODE === 'tablet' && p.local && track.kind === 'video') display(track);
+                else if (MODE === 'screen' && p.screen && track.kind === 'video' && !p.local) display(track);
+                else if (MODE === 'face' && !p.screen && !p.local && track.kind === 'video') {
+                    if (!p.user_name.includes("Tablet")) display(track);
+                }
+                
+                if (track.kind === 'audio' && !p.local && MODE !== 'tablet') {
+                    const aud = document.createElement('audio');
+                    aud.srcObject = new MediaStream([track]);
+                    aud.autoplay = true;
+                    document.body.appendChild(aud);
+                }
+            });
+
+            // 3. DEVICE SELECTION
+            let vid = false, aud = false;
+            
             if (MODE !== 'screen') {
                  try {
-                    // Force permission request if not granted
-                    await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); 
-                    
+                    // Pre-request permissions
+                    await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                     const devs = await navigator.mediaDevices.enumerateDevices();
                     const vDevs = devs.filter(d => d.kind === 'videoinput');
                     
-                    // RENDER DEVICE LIST TO SCREEN
-                    let html = "<h3>Available Cameras:</h3><ul>";
-                    vDevs.forEach(d => {
-                        let isMatch = false;
-                        if (MODE === 'face' && d.label.includes(KEYWORD_FACE)) isMatch = true;
-                        if (MODE === 'tablet' && d.label.includes(KEYWORD_TABLET)) isMatch = true;
-                        
-                        // Handle Empty Labels (Permission Blocked)
-                        let name = d.label ? d.label : "[EMPTY NAME] (System blocked?)";
-                        html += `<li class="${isMatch ? 'match' : ''}">${name}</li>`;
-                    });
-                    html += "</ul>";
-                    devList.innerHTML = html;
-
-                    // 2. SELECT LOGIC
-                    let vid = false;
-                    let aud = false;
-
                     if (MODE === 'face') {
                         const cam = vDevs.find(d => d.label.includes(KEYWORD_FACE));
-                        if (cam) { vid = cam.deviceId; aud = true; } 
-                        else { 
-                            label.innerText = `ERROR: '${KEYWORD_FACE}' NOT FOUND`; 
-                            return; // STOP HERE SO USER CAN READ LIST
-                        }
-                    } else if (MODE === 'tablet') {
+                        if (cam) { vid = cam.deviceId; aud = true; logMsg(`Selected Face Cam: ${cam.label}`); }
+                        else { label.innerText = "CAM MISSING"; logMsg("No Logitech found."); return; }
+                    } 
+                    else if (MODE === 'tablet') {
                         const cam = vDevs.find(d => d.label.includes(KEYWORD_TABLET));
-                        if (cam) { vid = cam.deviceId; aud = false; }
-                        else { 
-                            label.innerText = `ERROR: '${KEYWORD_TABLET}' NOT FOUND`; 
-                            return; // STOP HERE SO USER CAN READ LIST
-                        }
+                        if (cam) { vid = cam.deviceId; aud = false; logMsg(`Selected Tablet Cam: ${cam.label}`); }
+                        else { label.innerText = "OBS MISSING"; logMsg("No OBS Camera found."); return; }
                     }
-
-                    // 3. JOIN
-                    label.innerText = "Target Found. Joining...";
-                    const call = window.DailyIframe.createCallObject({ dailyConfig: { experimentalChromeVideoMuteLightOff: true } });
-                    await call.join({ url: ROOM_URL, userName: NAME, videoSource: vid, audioSource: aud });
-                    
-                    if (MODE === 'tablet') call.setLocalVideo(true);
-
-                    call.on('track-started', (e) => {
-                        const p = e.participant;
-                        const track = e.track;
-                        if (MODE === 'tablet' && p.local && track.kind === 'video') display(track);
-                        else if (MODE === 'screen' && p.screen && track.kind === 'video' && !p.local) display(track);
-                        else if (MODE === 'face' && !p.screen && !p.local && track.kind === 'video') {
-                            if (!p.user_name.includes("Tablet")) display(track);
-                        }
-                        if (track.kind === 'audio' && !p.local && MODE !== 'tablet') {
-                            const aud = document.createElement('audio');
-                            aud.srcObject = new MediaStream([track]);
-                            aud.autoplay = true;
-                            document.body.appendChild(aud);
-                        }
-                    });
-
-                 } catch(e) {
-                     label.innerText = "PERMISSION ERROR";
-                     devList.innerText = e.message;
-                 }
-            } else {
-                // Screen mode just joins
-                const call = window.DailyIframe.createCallObject();
-                await call.join({ url: ROOM_URL, userName: NAME, videoSource: false, audioSource: false });
-                call.on('track-started', (e) => {
-                    if (e.participant.screen && e.track.kind === 'video') display(e.track);
-                });
-            }
-        }
-
-        function display(track) {
-            const c = document.getElementById('container'); c.innerHTML = '';
-            const el = document.createElement('video');
-            el.srcObject = new MediaStream([track]); el.autoplay = true; el.muted = true;
-            c.appendChild(el);
-            document.getElementById('ui-layer').style.display = 'none';
-        }
-        start();
-    </script>
-</body>
-</html>
+                 } catch
