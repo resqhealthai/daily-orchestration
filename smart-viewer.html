@@ -2,18 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v19.1</title>
+    <title>Smart Viewer v21.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
-
-        /* --- STANDBY GRAPHIC --- */
-        #standby {
-            text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%;
-        }
+        #standby { text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%; }
         .logo { font-size: 80px; margin-bottom: 30px; display: block; }
         .status-text {
             font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
@@ -21,100 +17,125 @@
         }
         .pulse { animation: pulse-animation 2s infinite ease-in-out; }
         @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-
-        /* --- DEBUG / CRASH LOG --- */
-        #debug-log {
+        
+        #crash-log {
             position: absolute; bottom: 0; left: 0; width: 100%; 
-            background: rgba(50, 0, 0, 0.9); color: #ffcccc; 
+            background: rgba(100, 0, 0, 0.9); color: #fff; 
             font-family: monospace; font-size: 14px; padding: 10px;
-            display: none; z-index: 1000; text-align: center;
+            display: none; z-index: 1000;
         }
-
-        video { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            object-fit: contain; z-index: 10; background: black; 
-        }
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
+
+    <script src="https://cdn.daily.co/daily-js.js" defer></script>
 </head>
 <body>
 
-    <div id="debug-log"></div>
+    <div id="crash-log"></div>
 
     <div id="standby">
         <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">System Active (Loading Lib...)</div>
+        <div id="status" class="status-text pulse">Initializing System...</div>
     </div>
 
     <div id="container"></div>
 
     <script>
-        // --- 1. CONFIGURATION ---
-        var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
-        var rawURL = params.get('url') || "";
-        var targetURL = rawURL.trim().replace(/"/g, '');
-        var NAME = params.get('name') || "Smart-Viewer";
-        
-        var stat = document.getElementById('status');
-        var standby = document.getElementById('standby');
-        var container = document.getElementById('container');
-        var log = document.getElementById('debug-log');
-        var call = null;
-        var currentTrackId = null;
+        // GLOBAL CRASH CATCHER
+        window.onerror = function(msg, url, line) {
+            document.getElementById('crash-log').style.display = 'block';
+            document.getElementById('crash-log').innerHTML += "Error: " + msg + " (Line " + line + ")<br>";
+        };
 
-        // --- 2. SET MESSAGES IMMEDIATELY ---
-        var customMsg = "Initializing...";
-        if (MODE === 'face') customMsg = "Awaiting instructor's camera";
-        if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
-        if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-        stat.innerText = customMsg;
+        // Wait for the 'defer' script to finish loading
+        window.onload = function() {
+            if (window.DailyIframe) {
+                console.log("Library Active.");
+                runSystem();
+            } else {
+                document.getElementById('status').innerText = "NETWORK ERROR: Library Failed.";
+                document.getElementById('status').style.color = "red";
+            }
+        };
 
-        // --- 3. DYNAMIC LOADER (Prevents Hanging) ---
-        function loadDailyLib() {
-            var script = document.createElement('script');
-            script.src = "https://unpkg.com/@daily-co/daily-js";
-            script.async = true;
+        function runSystem() {
+            var params = new URLSearchParams(window.location.search);
+            var MODE = params.get('mode');
+            var rawURL = params.get('url') || "";
+            var targetURL = rawURL.trim().replace(/"/g, '');
+            var NAME = params.get('name') || "Smart-Viewer";
             
-            // Success
-            script.onload = function() {
-                console.log("Daily Lib Loaded!");
-                init();
-            };
+            var stat = document.getElementById('status');
+            var standby = document.getElementById('standby');
+            var container = document.getElementById('container');
             
-            // Failure
-            script.onerror = function() {
-                showError("NETWORK ERROR: Could not download Daily-JS library.");
-            };
+            // Set Messages
+            var customMsg = "Ready.";
+            if (MODE === 'face') customMsg = "Awaiting instructor's camera";
+            if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
+            if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
+            stat.innerText = customMsg;
 
-            // Timeout Watchdog (5 Seconds)
-            setTimeout(function() {
-                if (!window.DailyIframe) {
-                    showError("TIMEOUT: Daily-JS library took too long. Check Firewall.");
-                }
-            }, 8000);
+            if (!targetURL) { stat.innerText = "CONFIG ERROR: No URL"; return; }
 
-            document.body.appendChild(script);
-        }
-
-        function showError(msg) {
-            log.style.display = 'block';
-            log.innerText = msg;
-            stat.innerText = "SYSTEM HALTED";
-            stat.style.color = "red";
-        }
-
-        // --- 4. MAIN INIT ---
-        async function init() {
-            if (!targetURL) { showError("CONFIG ERROR: No URL"); return; }
-            
             try {
-                call = window.DailyIframe.createCallObject({
+                // Initialize Daily
+                var call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
                 call.on('track-started', handleVideoStart);
                 call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { showError("CALL ERROR: " + (e.errorMsg || e)); });
+                call.on('error', (e) => { stat.innerText = "Call Error: " + e.errorMsg; });
 
-                // JOIN (Triple Chrome Logic)
-                let isSender = (MODE === '
+                // Join (Triple Chrome Logic)
+                let isSender = (MODE === 'tablet' || MODE === 'face');
+                call.join({ 
+                    url: targetURL, 
+                    userName: NAME, 
+                    audioSource: isSender, 
+                    videoSource: isSender 
+                });
+
+            } catch(e) { stat.innerText = "Crash: " + e.message; }
+
+            // --- FILTER LOGIC (v16.3) ---
+            function handleVideoStart(e) {
+                var p = e.participant;
+                var track = e.track;
+
+                if (!p || !track) return;
+                if (p.local && MODE !== 'tablet') return; 
+                if (track.kind !== 'video') return; 
+
+                if (MODE === 'face') {
+                    if (p.user_name.indexOf("Tablet") !== -1) return; 
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) return; } catch(err) {}
+                }
+
+                if (MODE === 'screen') {
+                    var isScreen = false;
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
+                    if (!isScreen) return; 
+                }
+
+                standby.style.display = 'none';
+                container.innerHTML = ''; 
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; el.muted = true;
+                container.appendChild(el);
+                e.track.onended = () => { standby.style.display = 'block'; };
+            }
+
+            function handleVideoStop(e) {
+                // Simple cleanup
+                if (container.hasChildNodes()) {
+                    standby.style.display = 'block';
+                    container.innerHTML = '';
+                }
+            }
+        }
+    </script>
+</body>
+</html>
