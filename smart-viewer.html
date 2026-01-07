@@ -2,26 +2,134 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v27.0</title>
+    <title>Smart Viewer v28.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
-        #standby { text-align: center; z-index: 20; width: 80%; }
-        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
-        .status-text {
-            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
-            line-height: 1.5; text-transform: uppercase;
-        }
-        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
-        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        #status { font-size: 30px; letter-spacing: 2px; text-transform: uppercase; color: #ccc; }
+        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
+    </style>
+</head>
+<body>
+
+    <div id="status">System Active (v28)...</div>
+    <div id="container"></div>
+
+    <script>
+        // 1. CONFIGURATION
+        var stat = document.getElementById('status');
+        var container = document.getElementById('container');
         
-        #crash-log {
-            position: absolute; bottom: 0; left: 0; width: 100%; 
-            background: rgba(100, 0, 0, 0.9); color: #fff; 
-            font-family: monospace; font-size: 14px; padding: 10px;
-            display: none; z-index: 1000; text-align: left;
+        // 2. DYNAMIC LOADER (Based on the working v26 diagnostic)
+        var script = document.createElement('script');
+        script.src = "https://unpkg.com/@daily-co/daily-js";
+        script.async = true;
+        
+        script.onload = function() {
+            console.log("Library Loaded.");
+            stat.innerText = "Library Ready. Connecting...";
+            initApp();
+        };
+        
+        script.onerror = function() {
+            stat.innerText = "FATAL ERROR: Unpkg Blocked.";
+            stat.style.color = "red";
+        };
+        
+        document.body.appendChild(script);
+
+        // 3. MAIN APPLICATION
+        function initApp() {
+            var params = new URLSearchParams(window.location.search);
+            var MODE = params.get('mode');
+            var rawURL = params.get('url') || "";
+            var targetURL = rawURL.trim().replace(/"/g, '');
+            var NAME = params.get('name') || "Smart-Viewer";
+
+            // Set specific status messages
+            if (MODE === 'face') stat.innerText = "Awaiting instructor's camera";
+            if (MODE === 'screen') stat.innerText = "Awaiting instructor's screen share";
+            if (MODE === 'tablet') stat.innerText = "Connecting Tablet Uplink...";
+
+            if (!targetURL) { stat.innerText = "CONFIG ERROR: No URL"; return; }
+
+            try {
+                // Initialize Daily
+                // We use the 'experimental' flag to prevent black bars
+                var call = window.DailyIframe.createCallObject({
+                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+                });
+
+                call.on('track-started', handleVideoStart);
+                call.on('track-stopped', handleVideoStop);
+                call.on('error', (e) => { stat.innerText = "Call Error: " + (e.errorMsg || e); });
+
+                // Join the room
+                // Hardware is handled by Chrome Profiles, so we just set Sender/Receiver logic
+                let isSender = (MODE === 'tablet' || MODE === 'face');
+                
+                call.join({ 
+                    url: targetURL, 
+                    userName: NAME, 
+                    audioSource: isSender, 
+                    videoSource: isSender 
+                });
+
+            } catch(e) { 
+                stat.innerText = "Crash: " + e.message; 
+            }
+
+            // --- FILTER LOGIC (v16.3 Standard) ---
+            function handleVideoStart(e) {
+                var p = e.participant;
+                var track = e.track;
+
+                if (!p || !track) return;
+                
+                // IGNORE LOCAL (Unless Tablet)
+                if (p.local && MODE !== 'tablet') return; 
+                // IGNORE AUDIO
+                if (track.kind !== 'video') return; 
+
+                // MONITOR 1 (FACE) RULES
+                if (MODE === 'face') {
+                    if (p.user_name.indexOf("Tablet") !== -1) return; // Ignore Tablet
+                    // Ignore Screen Shares
+                    var isScreen = false;
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
+                    if (isScreen) return; 
+                }
+
+                // MONITOR 2 (SCREEN) RULES
+                if (MODE === 'screen') {
+                    // Only Allow Screen Shares
+                    var isScreen = false;
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
+                    if (!isScreen) return; 
+                }
+
+                // RENDER
+                stat.style.display = 'none'; // Hide text
+                container.innerHTML = ''; 
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; el.muted = true;
+                container.appendChild(el);
+                
+                // If track ends, show status text again
+                e.track.onended = () => { stat.style.display = 'block'; };
+            }
+
+            function handleVideoStop() {
+                if (container.hasChildNodes()) {
+                    stat.style.display = 'block';
+                    container.innerHTML = '';
+                }
+            }
         }
-        video { position: absolute; top: 0; left:
+    </script>
+</body>
+</html>
