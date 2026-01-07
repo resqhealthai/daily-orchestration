@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v16.0</title>
+    <title>Smart Viewer v16.1</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -79,7 +79,7 @@
                 call.on('track-stopped', handleVideoStop);
                 call.on('error', (e) => { stat.innerText = "ERR: " + (e.errorMsg || e); });
 
-                // 2. JOIN ATTEMPT
+                // 2. JOIN ATTEMPT (FAIL-SAFE)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 try {
                     await call.join({ url: targetURL, userName: NAME, audioSource: isSender, videoSource: isSender });
@@ -87,6 +87,7 @@
                     console.error("Primary Join Failed", joinError);
                     stat.innerText = "CAMERA BLOCKED. RETRYING PASSIVE...";
                     await call.join({ url: targetURL, userName: NAME, audioSource: false, videoSource: false });
+                    // SHOW THE RED BUTTON if we failed to get camera access
                     if (isSender) retryBtn.style.display = "inline-block";
                 }
 
@@ -103,7 +104,7 @@
 
         // --- TRACK HANDLING ---
         function handleVideoStart(e) {
-            // PASS 'e' (the full event) to the filter so we can check e.type
+            // Check if this track matches our mode
             if (!shouldProcess(e)) return;
 
             standby.style.display = 'none';
@@ -123,29 +124,46 @@
             }
         }
 
-        // --- THE FIXED LOGIC ---
+        // --- THE "ID MATCH" LOGIC (V16.1) ---
         function shouldProcess(event) {
             var p = event.participant;
             var track = event.track;
-            var type = event.type; // 'video' (Cam) or 'screenVideo' (Screen)
 
             // 1. GLOBAL: Ignore Local (unless Tablet loopback)
             if (p.local && MODE !== 'tablet') return false;
 
-            // 2. MONITOR 1 (FACE) LOGIC
-            // MUST be type 'video' (Camera). 
-            // MUST NOT be type 'screenVideo'.
+            // 2. FIND TRACK TYPE BY CHECKING ID
+            // We look at the participant's track list to see where this ID lives
+            var isScreen = false;
+            var isCam = false;
+
+            // Check if this is the Screen Track
+            if (p.tracks.screenVideo && 
+                p.tracks.screenVideo.persistentTrack && 
+                p.tracks.screenVideo.persistentTrack.id === track.id) {
+                isScreen = true;
+            }
+
+            // Check if this is the Camera Track
+            if (p.tracks.video && 
+                p.tracks.video.persistentTrack && 
+                p.tracks.video.persistentTrack.id === track.id) {
+                isCam = true;
+            }
+
+            // 3. ROUTING
             if (MODE === 'face') {
-                return (type === 'video'); 
+                return isCam; // ONLY allow confirmed Camera tracks
             } 
-            
-            // 3. MONITOR 2 (SCREEN) LOGIC
-            // MUST be type 'screenVideo' (Screen Share).
-            // STRICTLY IGNORE type 'video'.
             else if (MODE === 'screen') {
-                return (type === 'screenVideo');
+                return isScreen; // ONLY allow confirmed Screen tracks
+            }
+            else if (MODE === 'tablet') {
+                return isCam && !p.local;
             }
             
-            // 4. TABLET LOGIC
-            else if (MODE === 'tablet') {
-                return (
+            return false;
+        }
+    </script>
+</body>
+</html>
