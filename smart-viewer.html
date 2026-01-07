@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v16.3</title>
+    <title>Smart Viewer v17.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -29,6 +29,14 @@
             border: none; border-radius: 8px; cursor: pointer; z-index: 50;
         }
 
+        /* --- CRASH LOG (Visible only if error) --- */
+        #crash-log {
+            position: absolute; bottom: 0; left: 0; width: 100%; 
+            background: rgba(50, 0, 0, 0.9); color: #ffcccc; 
+            font-family: monospace; font-size: 14px; padding: 10px;
+            display: none; z-index: 1000;
+        }
+
         video { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             object-fit: contain; z-index: 10; background: black; 
@@ -37,9 +45,11 @@
 </head>
 <body>
 
+    <div id="crash-log"></div>
+
     <div id="standby">
         <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">Loading...</div>
+        <div id="status" class="status-text pulse">Loading System...</div>
         <button id="retry-btn" onclick="enableCamera()">⚠️ ENABLE CAMERA UPLINK</button>
     </div>
 
@@ -47,6 +57,13 @@
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
+        // GLOBAL ERROR HANDLER (Catches Syntax Errors)
+        window.onerror = function(message, source, lineno, colno, error) {
+            var log = document.getElementById('crash-log');
+            log.style.display = 'block';
+            log.innerText = "SYSTEM ERROR: " + message + " at line " + lineno;
+        };
+
         var params = new URLSearchParams(window.location.search);
         var MODE = params.get('mode');
         var targetURL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
@@ -61,10 +78,12 @@
 
         // 1. SET CUSTOM MESSAGES
         var customMsg = "Initializing...";
-        if (MODE === 'face') customMsg = "Awaiting instructor's camera and microphone";
+        if (MODE === 'face') customMsg = "Awaiting instructor's camera";
         if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
         if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-        stat.innerText = customMsg;
+        
+        // If this line runs, JS is working
+        stat.innerText = customMsg; 
 
         if (!targetURL) { stat.innerText = "CONFIG ERROR: NO URL"; stat.style.color = "red"; }
         else { init(); }
@@ -79,7 +98,7 @@
                 call.on('track-stopped', handleVideoStop);
                 call.on('error', (e) => { stat.innerText = "ERR: " + (e.errorMsg || e); });
 
-                // 2. JOIN ATTEMPT (FAIL-SAFE)
+                // 2. JOIN ATTEMPT (v15.8 Logic)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 try {
                     await call.join({ url: targetURL, userName: NAME, audioSource: isSender, videoSource: isSender });
@@ -99,40 +118,57 @@
             }
         }
 
-        // --- THE ROBUST LOGIC (V16.3) ---
+        // --- SAFE FILTER LOGIC (v17.0) ---
         function handleVideoStart(e) {
             var p = e.participant;
             var track = e.track;
 
-            // 1. GLOBAL SAFETY CHECKS
-            if (p.local && MODE !== 'tablet') return; // Ignore self
-            if (track.kind !== 'video') return; // Ignore audio
+            // GLOBAL: Ignore Local (Unless Tablet)
+            if (p.local && MODE !== 'tablet') return; 
+            if (track.kind !== 'video') return; 
 
-            // 2. MONITOR 1 (FACE) LOGIC
+            // SAFETY: Ensure tracks object exists
+            if (!p.tracks) return;
+
+            // DETERMINE IF THIS TRACK IS A SCREEN SHARE
+            // We check if the ID of this track matches the ID in the 'screenVideo' slot
+            var isScreen = false;
+            try {
+                if (p.tracks.screenVideo && 
+                    p.tracks.screenVideo.persistentTrack && 
+                    p.tracks.screenVideo.persistentTrack.id === track.id) {
+                    isScreen = true;
+                }
+            } catch(err) { console.log("Check error", err); }
+
+            // MONITOR 1 (FACE) RULES
             if (MODE === 'face') {
-                // RULE A: Ignore "Tablet" users (Fixes the Ghost Feed)
-                if (p.user_name.indexOf("Tablet") !== -1) return;
-                
-                // RULE B: Ignore Screen Shares (Fixes the Screen duplication)
-                // We verify this is the 'video' track, not 'screenVideo'
-                var isScreenTrack = false;
-                try {
-                    if (p.tracks.screenVideo && p.tracks.screenVideo.persistentTrack && 
-                        p.tracks.screenVideo.persistentTrack.id === track.id) {
-                        isScreenTrack = true;
-                    }
-                } catch(err) { console.log("Track check error", err); }
-
-                if (isScreenTrack) return; // If it's a screen, IGNORE IT.
+                if (p.user_name.indexOf("Tablet") !== -1) return; // Ignore Tablet
+                if (isScreen) return; // Ignore Screen Shares
             }
 
-            // 3. MONITOR 2 (SCREEN) LOGIC
+            // MONITOR 2 (SCREEN) RULES
             if (MODE === 'screen') {
-                // RULE: ONLY show if this specific track is the Screen Track
-                var isScreenTrack = false;
-                try {
-                    if (p.tracks.screenVideo && p.tracks.screenVideo.persistentTrack && 
-                        p.tracks.screenVideo.persistentTrack.id === track.id) {
-                        isScreenTrack = true;
-                    }
-                } catch(err) { console.log("Track check error
+                if (!isScreen) return; // Ignore anything that isn't a screen
+            }
+
+            // RENDER
+            standby.style.display = 'none';
+            container.innerHTML = ''; 
+            var el = document.createElement('video');
+            el.srcObject = new MediaStream([e.track]);
+            el.autoplay = true; el.muted = true;
+            container.appendChild(el);
+            currentTrackId = e.track.id;
+        }
+
+        function handleVideoStop(e) {
+            if (e.track.id === currentTrackId) {
+                standby.style.display = 'block';
+                container.innerHTML = '';
+                currentTrackId = null;
+            }
+        }
+    </script>
+</body>
+</html>
