@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v15.7</title>
+    <title>Smart Viewer v15.8</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -12,27 +12,25 @@
 
         /* --- STANDBY GRAPHIC --- */
         #standby {
-            text-align: center;
-            z-index: 20;
-            transition: opacity 0.5s ease;
-            width: 80%;
+            text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%;
         }
-        
         .logo { font-size: 80px; margin-bottom: 30px; display: block; }
-        
         .status-text {
             font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
             line-height: 1.5; text-transform: uppercase;
-            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
         }
-
         .pulse { animation: pulse-animation 2s infinite ease-in-out; }
         @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
 
-        /* VIDEO CONTAINER */
+        /* --- RETRY BUTTON (Hidden by default) --- */
+        #retry-btn {
+            display: none; margin-top: 20px; padding: 15px 30px;
+            font-size: 20px; background: #FF4136; color: white; 
+            border: none; border-radius: 8px; cursor: pointer; z-index: 50;
+        }
+
         video { 
-            position: absolute; top: 0; left: 0; 
-            width: 100%; height: 100%; 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             object-fit: contain; z-index: 10; background: black; 
         }
     </style>
@@ -42,7 +40,9 @@
     <div id="standby">
         <div class="logo">⚕️</div> 
         <div id="status" class="status-text pulse">Loading...</div>
+        <button id="retry-btn" onclick="enableCamera()">⚠️ ENABLE CAMERA UPLINK</button>
     </div>
+
     <div id="container"></div>
 
     <script src="https://unpkg.com/@daily-co/daily-js"></script>
@@ -55,53 +55,86 @@
         var stat = document.getElementById('status');
         var standby = document.getElementById('standby');
         var container = document.getElementById('container');
-        var currentTrackId = null; 
+        var retryBtn = document.getElementById('retry-btn');
+        var call = null;
+        var currentTrackId = null;
 
         // 1. SET CUSTOM MESSAGES
         var customMsg = "Initializing...";
         if (MODE === 'face') customMsg = "Awaiting instructor's camera and microphone";
         if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
         if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-        
         stat.innerText = customMsg;
 
         if (!targetURL) { 
-            stat.innerText = "CONFIG ERROR: NO URL FOUND"; 
+            stat.innerText = "CONFIG ERROR: NO URL"; 
             stat.style.color = "red";
         } else { 
             init(); 
         }
 
-        function init() {
+        async function init() {
             try {
-                // 2. CREATE CALL
-                var call = window.DailyIframe.createCallObject({
+                // Create Call Object
+                call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
                 call.on('track-started', handleVideoStart);
                 call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "ERR: " + e.errorMsg; });
+                call.on('error', (e) => { 
+                    stat.innerText = "ERR: " + (e.errorMsg || JSON.stringify(e)); 
+                });
 
-                // 3. JOIN LOGIC (Restored Room Camera)
-                // Tablet = Active (Sends OBS)
-                // Face (Monitor 1) = Active (Sends Logitech Room View)
-                // Screen (Monitor 2) = Passive (Sends Nothing)
-                
+                // 2. ATTEMPT JOIN (FAIL-SAFE LOGIC)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 
-                call.join({ 
-                    url: targetURL, 
-                    userName: NAME,
-                    audioSource: isSender ? true : false, 
-                    videoSource: isSender ? true : false
-                }).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
+                try {
+                    // Try to join nicely with requested permissions
+                    await call.join({ 
+                        url: targetURL, 
+                        userName: NAME,
+                        audioSource: isSender, 
+                        videoSource: isSender
+                    });
+                } catch (joinError) {
+                    console.error("Primary Join Failed", joinError);
+                    
+                    // IF FAIL: Retry as PASSIVE viewer (Rescue the display)
+                    stat.innerText = "CAMERA BLOCKED. RETRYING AS VIEWER...";
+                    
+                    await call.join({ 
+                        url: targetURL, 
+                        userName: NAME,
+                        audioSource: false, 
+                        videoSource: false 
+                    });
 
-            } catch(e) { stat.innerText = "CRASH: " + e.message; }
+                    // If that worked, show the button to enable camera manually
+                    if (isSender) {
+                        retryBtn.style.display = "inline-block";
+                    }
+                }
+
+            } catch(e) { 
+                stat.innerText = "CRITICAL FAIL: " + (e.message || JSON.stringify(e)); 
+            }
         }
 
+        // --- MANUAL CAMERA TRIGGER ---
+        function enableCamera() {
+            if (call) {
+                retryBtn.innerText = "ACTIVATING...";
+                call.setLocalVideo(true).then(() => {
+                    retryBtn.style.display = 'none'; // Success
+                }).catch(e => {
+                    retryBtn.innerText = "FAILED: " + e;
+                });
+            }
+        }
+
+        // --- VIDEO HANDLERS ---
         function handleVideoStart(e) {
-            // STRICT FILTER: Prevent Monitor 2 from showing local camera
             if (!shouldProcess(e.participant, e.track)) return;
 
             standby.style.display = 'none';
@@ -110,7 +143,6 @@
             el.srcObject = new MediaStream([e.track]);
             el.autoplay = true; el.muted = true;
             container.appendChild(el);
-            
             currentTrackId = e.track.id;
         }
 
@@ -123,171 +155,12 @@
         }
 
         function shouldProcess(p, track) {
-            // 1. GLOBAL BAN ON LOCAL (Unless Tablet Loopback)
             if (p.local && MODE !== 'tablet') return false;
-
-            // 2. VIDEO ONLY
             if (track.kind !== 'video') return false;
 
-            // 3. ROUTING
-            if (MODE === 'face') {
-                // Monitor 1: Show Instructor Face (Ignore Screen & Local)
-                return (!p.screen && !p.local);
-            } 
-            else if (MODE === 'screen') {
-                // Monitor 2: Show Screen Share ONLY
-                return (p.screen);
-            }
-            else if (MODE === 'tablet') {
-                return (!p.screen && !p.local);
-            }
-            return false;
-        }
-    </script>
-</body>
-</html><!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Smart Viewer v15.7</title>
-    <style>
-        body { 
-            background: #000; margin: 0; overflow: hidden; height: 100vh; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            font-family: sans-serif; color: white;
-        }
-
-        /* --- STANDBY GRAPHIC --- */
-        #standby {
-            text-align: center;
-            z-index: 20;
-            transition: opacity 0.5s ease;
-            width: 80%;
-        }
-        
-        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
-        
-        .status-text {
-            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
-            line-height: 1.5; text-transform: uppercase;
-            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-        }
-
-        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
-        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-
-        /* VIDEO CONTAINER */
-        video { 
-            position: absolute; top: 0; left: 0; 
-            width: 100%; height: 100%; 
-            object-fit: contain; z-index: 10; background: black; 
-        }
-    </style>
-</head>
-<body>
-
-    <div id="standby">
-        <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">Loading...</div>
-    </div>
-    <div id="container"></div>
-
-    <script src="https://unpkg.com/@daily-co/daily-js"></script>
-    <script>
-        var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
-        var targetURL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
-        var NAME = params.get('name') || "Smart-Viewer";
-        
-        var stat = document.getElementById('status');
-        var standby = document.getElementById('standby');
-        var container = document.getElementById('container');
-        var currentTrackId = null; 
-
-        // 1. SET CUSTOM MESSAGES
-        var customMsg = "Initializing...";
-        if (MODE === 'face') customMsg = "Awaiting instructor's camera and microphone";
-        if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
-        if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-        
-        stat.innerText = customMsg;
-
-        if (!targetURL) { 
-            stat.innerText = "CONFIG ERROR: NO URL FOUND"; 
-            stat.style.color = "red";
-        } else { 
-            init(); 
-        }
-
-        function init() {
-            try {
-                // 2. CREATE CALL
-                var call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-                });
-
-                call.on('track-started', handleVideoStart);
-                call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "ERR: " + e.errorMsg; });
-
-                // 3. JOIN LOGIC (Restored Room Camera)
-                // Tablet = Active (Sends OBS)
-                // Face (Monitor 1) = Active (Sends Logitech Room View)
-                // Screen (Monitor 2) = Passive (Sends Nothing)
-                
-                let isSender = (MODE === 'tablet' || MODE === 'face');
-                
-                call.join({ 
-                    url: targetURL, 
-                    userName: NAME,
-                    audioSource: isSender ? true : false, 
-                    videoSource: isSender ? true : false
-                }).catch(e => { stat.innerText = "JOIN FAILED: " + e; });
-
-            } catch(e) { stat.innerText = "CRASH: " + e.message; }
-        }
-
-        function handleVideoStart(e) {
-            // STRICT FILTER: Prevent Monitor 2 from showing local camera
-            if (!shouldProcess(e.participant, e.track)) return;
-
-            standby.style.display = 'none';
-            container.innerHTML = ''; 
-            var el = document.createElement('video');
-            el.srcObject = new MediaStream([e.track]);
-            el.autoplay = true; el.muted = true;
-            container.appendChild(el);
-            
-            currentTrackId = e.track.id;
-        }
-
-        function handleVideoStop(e) {
-            if (e.track.id === currentTrackId) {
-                standby.style.display = 'block';
-                container.innerHTML = '';
-                currentTrackId = null;
-            }
-        }
-
-        function shouldProcess(p, track) {
-            // 1. GLOBAL BAN ON LOCAL (Unless Tablet Loopback)
-            if (p.local && MODE !== 'tablet') return false;
-
-            // 2. VIDEO ONLY
-            if (track.kind !== 'video') return false;
-
-            // 3. ROUTING
-            if (MODE === 'face') {
-                // Monitor 1: Show Instructor Face (Ignore Screen & Local)
-                return (!p.screen && !p.local);
-            } 
-            else if (MODE === 'screen') {
-                // Monitor 2: Show Screen Share ONLY
-                return (p.screen);
-            }
-            else if (MODE === 'tablet') {
-                return (!p.screen && !p.local);
-            }
+            if (MODE === 'face') return (!p.screen && !p.local);
+            if (MODE === 'screen') return (p.screen);
+            if (MODE === 'tablet') return (!p.screen && !p.local);
             return false;
         }
     </script>
