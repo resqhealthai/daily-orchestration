@@ -2,33 +2,119 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v19.0 DIAGNOSTIC</title>
+    <title>Smart Viewer v19.1</title>
     <style>
         body { 
-            background: #000; /* Starts Black */
-            margin: 0; height: 100vh; 
-            display: flex; flex-direction: column; 
-            align-items: center; justify-content: center;
-            color: white; font-family: sans-serif;
+            background: #000; margin: 0; overflow: hidden; height: 100vh; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: sans-serif; color: white;
         }
-        h1 { font-size: 40px; }
+
+        /* --- STANDBY GRAPHIC --- */
+        #standby {
+            text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%;
+        }
+        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
+        .status-text {
+            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
+            line-height: 1.5; text-transform: uppercase;
+        }
+        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
+        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+
+        /* --- DEBUG / CRASH LOG --- */
+        #debug-log {
+            position: absolute; bottom: 0; left: 0; width: 100%; 
+            background: rgba(50, 0, 0, 0.9); color: #ffcccc; 
+            font-family: monospace; font-size: 14px; padding: 10px;
+            display: none; z-index: 1000; text-align: center;
+        }
+
+        video { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            object-fit: contain; z-index: 10; background: black; 
+        }
     </style>
 </head>
 <body>
 
-    <h1 id="status">HTML LOADED (JS DEAD)</h1>
+    <div id="debug-log"></div>
+
+    <div id="standby">
+        <div class="logo">⚕️</div> 
+        <div id="status" class="status-text pulse">System Active (Loading Lib...)</div>
+    </div>
+
+    <div id="container"></div>
 
     <script>
-        // If this runs, the background becomes BLUE.
-        document.body.style.backgroundColor = "#0074D9"; // Blue
-        document.getElementById('status').innerText = "JAVASCRIPT IS ALIVE";
+        // --- 1. CONFIGURATION ---
+        var params = new URLSearchParams(window.location.search);
+        var MODE = params.get('mode');
+        var rawURL = params.get('url') || "";
+        var targetURL = rawURL.trim().replace(/"/g, '');
+        var NAME = params.get('name') || "Smart-Viewer";
         
-        // Check if we can reach the outside world
-        var img = new Image();
-        img.onload = function() { console.log("Internet OK"); };
-        img.onerror = function() { console.log("Internet Blocked?"); };
-        img.src = "https://www.google.com/favicon.ico?r=" + Math.random();
-    </script>
+        var stat = document.getElementById('status');
+        var standby = document.getElementById('standby');
+        var container = document.getElementById('container');
+        var log = document.getElementById('debug-log');
+        var call = null;
+        var currentTrackId = null;
 
-</body>
-</html>
+        // --- 2. SET MESSAGES IMMEDIATELY ---
+        var customMsg = "Initializing...";
+        if (MODE === 'face') customMsg = "Awaiting instructor's camera";
+        if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
+        if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
+        stat.innerText = customMsg;
+
+        // --- 3. DYNAMIC LOADER (Prevents Hanging) ---
+        function loadDailyLib() {
+            var script = document.createElement('script');
+            script.src = "https://unpkg.com/@daily-co/daily-js";
+            script.async = true;
+            
+            // Success
+            script.onload = function() {
+                console.log("Daily Lib Loaded!");
+                init();
+            };
+            
+            // Failure
+            script.onerror = function() {
+                showError("NETWORK ERROR: Could not download Daily-JS library.");
+            };
+
+            // Timeout Watchdog (5 Seconds)
+            setTimeout(function() {
+                if (!window.DailyIframe) {
+                    showError("TIMEOUT: Daily-JS library took too long. Check Firewall.");
+                }
+            }, 8000);
+
+            document.body.appendChild(script);
+        }
+
+        function showError(msg) {
+            log.style.display = 'block';
+            log.innerText = msg;
+            stat.innerText = "SYSTEM HALTED";
+            stat.style.color = "red";
+        }
+
+        // --- 4. MAIN INIT ---
+        async function init() {
+            if (!targetURL) { showError("CONFIG ERROR: No URL"); return; }
+            
+            try {
+                call = window.DailyIframe.createCallObject({
+                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
+                });
+
+                call.on('track-started', handleVideoStart);
+                call.on('track-stopped', handleVideoStop);
+                call.on('error', (e) => { showError("CALL ERROR: " + (e.errorMsg || e)); });
+
+                // JOIN (Triple Chrome Logic)
+                let isSender = (MODE === '
