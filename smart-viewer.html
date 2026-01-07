@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v24.0</title>
+    <title>Smart Viewer v25.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -33,85 +33,52 @@
 
     <div id="standby">
         <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">System Active. Fetching Lib...</div>
+        <div id="status" class="status-text pulse">System Active (JSDelivr)</div>
     </div>
 
     <div id="container"></div>
 
     <script>
-        // --- 1. SETUP ---
+        // 1. PROOF OF LIFE
+        console.log("--- SYSTEM START v25.0 ---");
         var stat = document.getElementById('status');
-        var log = document.getElementById('crash-log');
         
-        function logError(msg) {
-            log.style.display = 'block';
-            log.innerHTML += "ERR: " + msg + "<br>";
-            stat.innerText = "SYSTEM FAILURE";
+        // 2. LOAD LIBRARY FROM ENTERPRISE CDN (JSDelivr)
+        // We add ?v=random to ensure your network doesn't serve a stale/broken cached version
+        var cacheBust = Math.floor(Math.random() * 10000);
+        var libUrl = "https://cdn.jsdelivr.net/npm/@daily-co/daily-js?v=" + cacheBust;
+
+        var script = document.createElement('script');
+        script.src = libUrl;
+        script.async = true;
+        script.crossOrigin = "anonymous"; // Helps with CORS issues
+
+        script.onload = function() {
+            console.log("Library Loaded Successfully.");
+            initApp();
+        };
+
+        script.onerror = function(e) {
+            console.error("Library Load Error", e);
+            document.getElementById('crash-log').style.display = 'block';
+            document.getElementById('crash-log').innerText = "FATAL: JSDelivr CDN Blocked.";
+            stat.innerText = "NETWORK ERROR";
             stat.style.color = "red";
-        }
+        };
 
-        // --- 2. THE BULLETPROOF LOADER ---
-        function loadLibrary() {
-            var primary = "https://unpkg.com/@daily-co/daily-js";
-            var backup = "https://esm.sh/@daily-co/daily-js"; // Backup Mirror
+        // Inject the script
+        document.body.appendChild(script);
 
-            var script = document.createElement('script');
-            script.src = primary;
-            script.async = true;
-
-            // SUCCESS HANDLER
-            script.onload = function() {
-                console.log("Library Loaded via Primary.");
-                startApp();
-            };
-
-            // ERROR HANDLER
-            script.onerror = function() {
-                console.warn("Primary failed. Trying backup...");
-                stat.innerText = "Primary blocked. Trying Backup...";
-                loadBackup(backup);
-            };
-
-            document.body.appendChild(script);
-
-            // TIMEOUT WATCHDOG (3 Seconds)
-            // If the primary source hangs, we force the backup.
-            setTimeout(function() {
-                if (!window.DailyIframe) {
-                    console.warn("Primary timeout. Forcing backup...");
-                    stat.innerText = "Network slow. Switching sources...";
-                    loadBackup(backup);
-                }
-            }, 3000);
-        }
-
-        function loadBackup(url) {
-            // Prevent double-loading if the first one eventually finishes
-            if (window.DailyIframe) return; 
-
-            var script = document.createElement('script');
-            script.src = url;
-            script.async = true;
-            script.onload = function() {
-                console.log("Library Loaded via Backup.");
-                startApp();
-            };
-            script.onerror = function() {
-                logError("FATAL: Both library sources blocked by firewall.");
-            };
-            document.body.appendChild(script);
-        }
-
-        // --- 3. MAIN APPLICATION ---
-        function startApp() {
-            if (window.appStarted) return; // Prevent double-start
-            window.appStarted = true;
-
+        // --- 3. MAIN APP LOGIC ---
+        function initApp() {
             var params = new URLSearchParams(window.location.search);
             var MODE = params.get('mode');
             var rawURL = params.get('url') || "";
             var targetURL = rawURL.trim().replace(/"/g, '');
             var NAME = params.get('name') || "Smart-Viewer";
+            
+            var standby = document.getElementById('standby');
+            var container = document.getElementById('container');
             
             // Set Messages
             var customMsg = "Ready.";
@@ -120,17 +87,19 @@
             if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
             stat.innerText = customMsg;
 
-            if (!targetURL) { logError("No URL in config"); return; }
+            if (!targetURL) { stat.innerText = "CONFIG ERROR: No URL"; return; }
 
             try {
+                // Initialize Daily
                 var call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
                 call.on('track-started', handleVideoStart);
                 call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { logError("Call Error: " + (e.errorMsg || e)); });
+                call.on('error', (e) => { stat.innerText = "Call Error: " + (e.errorMsg || e); });
 
+                // Join (Triple Chrome Logic)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 call.join({ 
                     url: targetURL, 
@@ -139,4 +108,47 @@
                     videoSource: isSender 
                 });
 
-            } catch(e) { logError("Crash: " + e.message);
+            } catch(e) { 
+                stat.innerText = "Crash: " + e.message; 
+            }
+
+            // --- FILTER LOGIC (v16.3) ---
+            function handleVideoStart(e) {
+                var p = e.participant;
+                var track = e.track;
+
+                if (!p || !track) return;
+                if (p.local && MODE !== 'tablet') return; 
+                if (track.kind !== 'video') return; 
+
+                if (MODE === 'face') {
+                    if (p.user_name.indexOf("Tablet") !== -1) return; 
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) return; } catch(err) {}
+                }
+
+                if (MODE === 'screen') {
+                    var isScreen = false;
+                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
+                    if (!isScreen) return; 
+                }
+
+                standby.style.display = 'none';
+                container.innerHTML = ''; 
+                var el = document.createElement('video');
+                el.srcObject = new MediaStream([e.track]);
+                el.autoplay = true; el.muted = true;
+                container.appendChild(el);
+                
+                e.track.onended = () => { standby.style.display = 'block'; };
+            }
+
+            function handleVideoStop() {
+                if (container.hasChildNodes()) {
+                    standby.style.display = 'block';
+                    container.innerHTML = '';
+                }
+            }
+        }
+    </script>
+</body>
+</html>
