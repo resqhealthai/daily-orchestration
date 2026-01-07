@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v16.1</title>
+    <title>Smart Viewer v16.2</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -79,7 +79,7 @@
                 call.on('track-stopped', handleVideoStop);
                 call.on('error', (e) => { stat.innerText = "ERR: " + (e.errorMsg || e); });
 
-                // 2. JOIN ATTEMPT (FAIL-SAFE)
+                // 2. JOIN ATTEMPT
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 try {
                     await call.join({ url: targetURL, userName: NAME, audioSource: isSender, videoSource: isSender });
@@ -87,83 +87,9 @@
                     console.error("Primary Join Failed", joinError);
                     stat.innerText = "CAMERA BLOCKED. RETRYING PASSIVE...";
                     await call.join({ url: targetURL, userName: NAME, audioSource: false, videoSource: false });
-                    // SHOW THE RED BUTTON if we failed to get camera access
                     if (isSender) retryBtn.style.display = "inline-block";
                 }
-
             } catch(e) { stat.innerText = "CRASH: " + e.message; }
         }
 
-        // --- MANUAL TRIGGER ---
-        function enableCamera() {
-            if (call) {
-                retryBtn.innerText = "ACTIVATING...";
-                call.setLocalVideo(true).then(() => retryBtn.style.display = 'none');
-            }
-        }
-
-        // --- TRACK HANDLING ---
-        function handleVideoStart(e) {
-            // Check if this track matches our mode
-            if (!shouldProcess(e)) return;
-
-            standby.style.display = 'none';
-            container.innerHTML = ''; 
-            var el = document.createElement('video');
-            el.srcObject = new MediaStream([e.track]);
-            el.autoplay = true; el.muted = true;
-            container.appendChild(el);
-            currentTrackId = e.track.id;
-        }
-
-        function handleVideoStop(e) {
-            if (e.track.id === currentTrackId) {
-                standby.style.display = 'block';
-                container.innerHTML = '';
-                currentTrackId = null;
-            }
-        }
-
-        // --- THE "ID MATCH" LOGIC (V16.1) ---
-        function shouldProcess(event) {
-            var p = event.participant;
-            var track = event.track;
-
-            // 1. GLOBAL: Ignore Local (unless Tablet loopback)
-            if (p.local && MODE !== 'tablet') return false;
-
-            // 2. FIND TRACK TYPE BY CHECKING ID
-            // We look at the participant's track list to see where this ID lives
-            var isScreen = false;
-            var isCam = false;
-
-            // Check if this is the Screen Track
-            if (p.tracks.screenVideo && 
-                p.tracks.screenVideo.persistentTrack && 
-                p.tracks.screenVideo.persistentTrack.id === track.id) {
-                isScreen = true;
-            }
-
-            // Check if this is the Camera Track
-            if (p.tracks.video && 
-                p.tracks.video.persistentTrack && 
-                p.tracks.video.persistentTrack.id === track.id) {
-                isCam = true;
-            }
-
-            // 3. ROUTING
-            if (MODE === 'face') {
-                return isCam; // ONLY allow confirmed Camera tracks
-            } 
-            else if (MODE === 'screen') {
-                return isScreen; // ONLY allow confirmed Screen tracks
-            }
-            else if (MODE === 'tablet') {
-                return isCam && !p.local;
-            }
-            
-            return false;
-        }
-    </script>
-</body>
-</html>
+        function
