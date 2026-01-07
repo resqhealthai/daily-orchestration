@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v21.0</title>
+    <title>Smart Viewer v22.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -27,7 +27,7 @@
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
 
-    <script src="https://cdn.daily.co/daily-js.js" defer></script>
+    <script src="https://unpkg.com/@daily-co/daily-js" defer crossorigin></script>
 </head>
 <body>
 
@@ -47,13 +47,16 @@
             document.getElementById('crash-log').innerHTML += "Error: " + msg + " (Line " + line + ")<br>";
         };
 
-        // Wait for the 'defer' script to finish loading
+        // WAITING FOR LIBRARY
+        // This function runs automatically once the 'defer' script above finishes.
         window.onload = function() {
+            // Check if library arrived
             if (window.DailyIframe) {
                 console.log("Library Active.");
                 runSystem();
             } else {
-                document.getElementById('status').innerText = "NETWORK ERROR: Library Failed.";
+                // If we are here, Unpkg is blocked or down.
+                document.getElementById('status').innerText = "NETWORK ERROR: Unpkg.com unreachable.";
                 document.getElementById('status').style.color = "red";
             }
         };
@@ -86,9 +89,9 @@
 
                 call.on('track-started', handleVideoStart);
                 call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "Call Error: " + e.errorMsg; });
+                call.on('error', (e) => { stat.innerText = "Call Error: " + (e.errorMsg || e); });
 
-                // Join (Triple Chrome Logic)
+                // Join (Hardware is handled by Chrome Profile)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 call.join({ 
                     url: targetURL, 
@@ -99,43 +102,23 @@
 
             } catch(e) { stat.innerText = "Crash: " + e.message; }
 
-            // --- FILTER LOGIC (v16.3) ---
+            // --- FILTER LOGIC (v16.3 Standard) ---
             function handleVideoStart(e) {
                 var p = e.participant;
                 var track = e.track;
 
                 if (!p || !track) return;
+                
+                // 1. Ignore Local (unless Tablet)
                 if (p.local && MODE !== 'tablet') return; 
+                
+                // 2. Ignore Audio tracks
                 if (track.kind !== 'video') return; 
 
+                // 3. Monitor 1 (Face) Rules
                 if (MODE === 'face') {
-                    if (p.user_name.indexOf("Tablet") !== -1) return; 
-                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) return; } catch(err) {}
-                }
-
-                if (MODE === 'screen') {
+                    if (p.user_name.indexOf("Tablet") !== -1) return; // Ignore Tablet
+                    
+                    // Ignore Screen Shares
                     var isScreen = false;
                     try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
-                    if (!isScreen) return; 
-                }
-
-                standby.style.display = 'none';
-                container.innerHTML = ''; 
-                var el = document.createElement('video');
-                el.srcObject = new MediaStream([e.track]);
-                el.autoplay = true; el.muted = true;
-                container.appendChild(el);
-                e.track.onended = () => { standby.style.display = 'block'; };
-            }
-
-            function handleVideoStop(e) {
-                // Simple cleanup
-                if (container.hasChildNodes()) {
-                    standby.style.display = 'block';
-                    container.innerHTML = '';
-                }
-            }
-        }
-    </script>
-</body>
-</html>
