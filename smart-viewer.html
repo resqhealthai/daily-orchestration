@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v22.0</title>
+    <title>Smart Viewer v24.0</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             font-family: sans-serif; color: white;
         }
-        #standby { text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%; }
+        #standby { text-align: center; z-index: 20; width: 80%; }
         .logo { font-size: 80px; margin-bottom: 30px; display: block; }
         .status-text {
             font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
@@ -22,12 +22,10 @@
             position: absolute; bottom: 0; left: 0; width: 100%; 
             background: rgba(100, 0, 0, 0.9); color: #fff; 
             font-family: monospace; font-size: 14px; padding: 10px;
-            display: none; z-index: 1000;
+            display: none; z-index: 1000; text-align: left;
         }
         video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
     </style>
-
-    <script src="https://unpkg.com/@daily-co/daily-js" defer crossorigin></script>
 </head>
 <body>
 
@@ -35,42 +33,85 @@
 
     <div id="standby">
         <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">Initializing System...</div>
+        <div id="status" class="status-text pulse">System Active. Fetching Lib...</div>
     </div>
 
     <div id="container"></div>
 
     <script>
-        // GLOBAL CRASH CATCHER
-        window.onerror = function(msg, url, line) {
-            document.getElementById('crash-log').style.display = 'block';
-            document.getElementById('crash-log').innerHTML += "Error: " + msg + " (Line " + line + ")<br>";
-        };
+        // --- 1. SETUP ---
+        var stat = document.getElementById('status');
+        var log = document.getElementById('crash-log');
+        
+        function logError(msg) {
+            log.style.display = 'block';
+            log.innerHTML += "ERR: " + msg + "<br>";
+            stat.innerText = "SYSTEM FAILURE";
+            stat.style.color = "red";
+        }
 
-        // WAITING FOR LIBRARY
-        // This function runs automatically once the 'defer' script above finishes.
-        window.onload = function() {
-            // Check if library arrived
-            if (window.DailyIframe) {
-                console.log("Library Active.");
-                runSystem();
-            } else {
-                // If we are here, Unpkg is blocked or down.
-                document.getElementById('status').innerText = "NETWORK ERROR: Unpkg.com unreachable.";
-                document.getElementById('status').style.color = "red";
-            }
-        };
+        // --- 2. THE BULLETPROOF LOADER ---
+        function loadLibrary() {
+            var primary = "https://unpkg.com/@daily-co/daily-js";
+            var backup = "https://esm.sh/@daily-co/daily-js"; // Backup Mirror
 
-        function runSystem() {
+            var script = document.createElement('script');
+            script.src = primary;
+            script.async = true;
+
+            // SUCCESS HANDLER
+            script.onload = function() {
+                console.log("Library Loaded via Primary.");
+                startApp();
+            };
+
+            // ERROR HANDLER
+            script.onerror = function() {
+                console.warn("Primary failed. Trying backup...");
+                stat.innerText = "Primary blocked. Trying Backup...";
+                loadBackup(backup);
+            };
+
+            document.body.appendChild(script);
+
+            // TIMEOUT WATCHDOG (3 Seconds)
+            // If the primary source hangs, we force the backup.
+            setTimeout(function() {
+                if (!window.DailyIframe) {
+                    console.warn("Primary timeout. Forcing backup...");
+                    stat.innerText = "Network slow. Switching sources...";
+                    loadBackup(backup);
+                }
+            }, 3000);
+        }
+
+        function loadBackup(url) {
+            // Prevent double-loading if the first one eventually finishes
+            if (window.DailyIframe) return; 
+
+            var script = document.createElement('script');
+            script.src = url;
+            script.async = true;
+            script.onload = function() {
+                console.log("Library Loaded via Backup.");
+                startApp();
+            };
+            script.onerror = function() {
+                logError("FATAL: Both library sources blocked by firewall.");
+            };
+            document.body.appendChild(script);
+        }
+
+        // --- 3. MAIN APPLICATION ---
+        function startApp() {
+            if (window.appStarted) return; // Prevent double-start
+            window.appStarted = true;
+
             var params = new URLSearchParams(window.location.search);
             var MODE = params.get('mode');
             var rawURL = params.get('url') || "";
             var targetURL = rawURL.trim().replace(/"/g, '');
             var NAME = params.get('name') || "Smart-Viewer";
-            
-            var stat = document.getElementById('status');
-            var standby = document.getElementById('standby');
-            var container = document.getElementById('container');
             
             // Set Messages
             var customMsg = "Ready.";
@@ -79,19 +120,17 @@
             if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
             stat.innerText = customMsg;
 
-            if (!targetURL) { stat.innerText = "CONFIG ERROR: No URL"; return; }
+            if (!targetURL) { logError("No URL in config"); return; }
 
             try {
-                // Initialize Daily
                 var call = window.DailyIframe.createCallObject({
                     dailyConfig: { experimentalChromeVideoMuteLightOff: true }
                 });
 
                 call.on('track-started', handleVideoStart);
                 call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "Call Error: " + (e.errorMsg || e); });
+                call.on('error', (e) => { logError("Call Error: " + (e.errorMsg || e)); });
 
-                // Join (Hardware is handled by Chrome Profile)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 call.join({ 
                     url: targetURL, 
@@ -100,25 +139,4 @@
                     videoSource: isSender 
                 });
 
-            } catch(e) { stat.innerText = "Crash: " + e.message; }
-
-            // --- FILTER LOGIC (v16.3 Standard) ---
-            function handleVideoStart(e) {
-                var p = e.participant;
-                var track = e.track;
-
-                if (!p || !track) return;
-                
-                // 1. Ignore Local (unless Tablet)
-                if (p.local && MODE !== 'tablet') return; 
-                
-                // 2. Ignore Audio tracks
-                if (track.kind !== 'video') return; 
-
-                // 3. Monitor 1 (Face) Rules
-                if (MODE === 'face') {
-                    if (p.user_name.indexOf("Tablet") !== -1) return; // Ignore Tablet
-                    
-                    // Ignore Screen Shares
-                    var isScreen = false;
-                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
+            } catch(e) { logError("Crash: " + e.message);
