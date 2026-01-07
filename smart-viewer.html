@@ -2,80 +2,33 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v16.3</title>
+    <title>Smart Viewer v19.0 DIAGNOSTIC</title>
     <style>
         body { 
-            background: #000; margin: 0; overflow: hidden; height: 100vh; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            font-family: sans-serif; color: white;
+            background: #000; /* Starts Black */
+            margin: 0; height: 100vh; 
+            display: flex; flex-direction: column; 
+            align-items: center; justify-content: center;
+            color: white; font-family: sans-serif;
         }
-
-        /* --- STANDBY GRAPHIC --- */
-        #standby {
-            text-align: center; z-index: 20; transition: opacity 0.5s ease; width: 80%;
-        }
-        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
-        .status-text {
-            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
-            line-height: 1.5; text-transform: uppercase;
-        }
-        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
-        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-
-        /* --- RETRY BUTTON --- */
-        /* Only appears if hardware access fails completely */
-        #retry-btn {
-            display: none; margin-top: 20px; padding: 15px 30px;
-            font-size: 20px; background: #FF4136; color: white; 
-            border: none; border-radius: 8px; cursor: pointer; z-index: 50;
-        }
-
-        video { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            object-fit: contain; z-index: 10; background: black; 
-        }
+        h1 { font-size: 40px; }
     </style>
 </head>
 <body>
 
-    <div id="standby">
-        <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">Loading...</div>
-        <button id="retry-btn" onclick="enableCamera()">⚠️ ENABLE CAMERA UPLINK</button>
-    </div>
+    <h1 id="status">HTML LOADED (JS DEAD)</h1>
 
-    <div id="container"></div>
-
-    <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <script>
-        var params = new URLSearchParams(window.location.search);
-        var MODE = params.get('mode');
-        var targetURL = params.get('url') ? params.get('url').trim().replace(/"/g, '') : "";
-        var NAME = params.get('name') || "Smart-Viewer";
+        // If this runs, the background becomes BLUE.
+        document.body.style.backgroundColor = "#0074D9"; // Blue
+        document.getElementById('status').innerText = "JAVASCRIPT IS ALIVE";
         
-        var stat = document.getElementById('status');
-        var standby = document.getElementById('standby');
-        var container = document.getElementById('container');
-        var retryBtn = document.getElementById('retry-btn');
-        var call = null;
-        var currentTrackId = null;
+        // Check if we can reach the outside world
+        var img = new Image();
+        img.onload = function() { console.log("Internet OK"); };
+        img.onerror = function() { console.log("Internet Blocked?"); };
+        img.src = "https://www.google.com/favicon.ico?r=" + Math.random();
+    </script>
 
-        // 1. SET CUSTOM MESSAGES
-        var customMsg = "Initializing...";
-        if (MODE === 'face') customMsg = "Awaiting instructor's camera and microphone";
-        if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
-        if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-        stat.innerText = customMsg;
-
-        if (!targetURL) { stat.innerText = "CONFIG ERROR: NO URL"; stat.style.color = "red"; }
-        else { init(); }
-
-        async function init() {
-            try {
-                call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-                });
-
-                call.on('track-started', handleVideoStart);
-                call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "ERR: " + (e.errorMsg ||
+</body>
+</html>
