@@ -2,61 +2,26 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v26.0 DIAGNOSTIC</title>
+    <title>Smart Viewer v27.0</title>
     <style>
         body { 
-            background: #222; color: white; font-family: sans-serif;
-            display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;
+            background: #000; margin: 0; overflow: hidden; height: 100vh; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-family: sans-serif; color: white;
         }
-        .box {
-            width: 80%; padding: 20px; margin: 10px; border-radius: 8px;
-            text-align: center; font-size: 24px; font-weight: bold;
-            background: #444; border: 2px solid #666;
+        #standby { text-align: center; z-index: 20; width: 80%; }
+        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
+        .status-text {
+            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
+            line-height: 1.5; text-transform: uppercase;
         }
-        .success { background: #2ECC40; border-color: #fff; color: black; }
-        .fail { background: #FF4136; border-color: #fff; }
-    </style>
-</head>
-<body>
-
-    <h1>CHROME DOWNLOAD TEST</h1>
-
-    <div id="box-html" class="box success">1. HTML LOADED</div>
-
-    <div id="box-jquery" class="box">2. DOWNLOADING JQUERY...</div>
-
-    <div id="box-daily" class="box">3. DOWNLOADING DAILY...</div>
-
-    <script>
-        // --- TEST 2: JQUERY (Tiny File) ---
-        var jq = document.createElement('script');
-        jq.src = "https://code.jquery.com/jquery-3.6.0.min.js";
-        jq.onload = function() {
-            document.getElementById('box-jquery').innerText = "2. JQUERY SUCCESS";
-            document.getElementById('box-jquery').classList.add("success");
-            loadDaily(); // Start next test
-        };
-        jq.onerror = function() {
-            document.getElementById('box-jquery').innerText = "2. JQUERY BLOCKED";
-            document.getElementById('box-jquery').classList.add("fail");
-            loadDaily(); // Try next anyway
-        };
-        document.body.appendChild(jq);
-
-        // --- TEST 3: DAILY (Target File) ---
-        function loadDaily() {
-            var d = document.createElement('script');
-            d.src = "https://unpkg.com/@daily-co/daily-js";
-            d.onload = function() {
-                document.getElementById('box-daily').innerText = "3. DAILY SUCCESS";
-                document.getElementById('box-daily').classList.add("success");
-            };
-            d.onerror = function() {
-                document.getElementById('box-daily').innerText = "3. DAILY BLOCKED";
-                document.getElementById('box-daily').classList.add("fail");
-            };
-            document.body.appendChild(d);
+        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
+        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        
+        #crash-log {
+            position: absolute; bottom: 0; left: 0; width: 100%; 
+            background: rgba(100, 0, 0, 0.9); color: #fff; 
+            font-family: monospace; font-size: 14px; padding: 10px;
+            display: none; z-index: 1000; text-align: left;
         }
-    </script>
-</body>
-</html>
+        video { position: absolute; top: 0; left:
