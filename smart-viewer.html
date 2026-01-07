@@ -2,152 +2,60 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v25.0</title>
+    <title>Smart Viewer v26.0 DIAGNOSTIC</title>
     <style>
         body { 
-            background: #000; margin: 0; overflow: hidden; height: 100vh; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            font-family: sans-serif; color: white;
+            background: #222; color: white; font-family: sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;
         }
-        #standby { text-align: center; z-index: 20; width: 80%; }
-        .logo { font-size: 80px; margin-bottom: 30px; display: block; }
-        .status-text {
-            font-size: 32px; font-weight: 300; letter-spacing: 1px; color: #ccc;
-            line-height: 1.5; text-transform: uppercase;
+        .box {
+            width: 80%; padding: 20px; margin: 10px; border-radius: 8px;
+            text-align: center; font-size: 24px; font-weight: bold;
+            background: #444; border: 2px solid #666;
         }
-        .pulse { animation: pulse-animation 2s infinite ease-in-out; }
-        @keyframes pulse-animation { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-        
-        #crash-log {
-            position: absolute; bottom: 0; left: 0; width: 100%; 
-            background: rgba(100, 0, 0, 0.9); color: #fff; 
-            font-family: monospace; font-size: 14px; padding: 10px;
-            display: none; z-index: 1000; text-align: left;
-        }
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; background: black; }
+        .success { background: #2ECC40; border-color: #fff; color: black; }
+        .fail { background: #FF4136; border-color: #fff; }
     </style>
 </head>
 <body>
 
-    <div id="crash-log"></div>
+    <h1>CHROME DOWNLOAD TEST</h1>
 
-    <div id="standby">
-        <div class="logo">⚕️</div> 
-        <div id="status" class="status-text pulse">System Active (JSDelivr)</div>
-    </div>
+    <div id="box-html" class="box success">1. HTML LOADED</div>
 
-    <div id="container"></div>
+    <div id="box-jquery" class="box">2. DOWNLOADING JQUERY...</div>
+
+    <div id="box-daily" class="box">3. DOWNLOADING DAILY...</div>
 
     <script>
-        // 1. PROOF OF LIFE
-        console.log("--- SYSTEM START v25.0 ---");
-        var stat = document.getElementById('status');
-        
-        // 2. LOAD LIBRARY FROM ENTERPRISE CDN (JSDelivr)
-        // We add ?v=random to ensure your network doesn't serve a stale/broken cached version
-        var cacheBust = Math.floor(Math.random() * 10000);
-        var libUrl = "https://cdn.jsdelivr.net/npm/@daily-co/daily-js?v=" + cacheBust;
-
-        var script = document.createElement('script');
-        script.src = libUrl;
-        script.async = true;
-        script.crossOrigin = "anonymous"; // Helps with CORS issues
-
-        script.onload = function() {
-            console.log("Library Loaded Successfully.");
-            initApp();
+        // --- TEST 2: JQUERY (Tiny File) ---
+        var jq = document.createElement('script');
+        jq.src = "https://code.jquery.com/jquery-3.6.0.min.js";
+        jq.onload = function() {
+            document.getElementById('box-jquery').innerText = "2. JQUERY SUCCESS";
+            document.getElementById('box-jquery').classList.add("success");
+            loadDaily(); // Start next test
         };
-
-        script.onerror = function(e) {
-            console.error("Library Load Error", e);
-            document.getElementById('crash-log').style.display = 'block';
-            document.getElementById('crash-log').innerText = "FATAL: JSDelivr CDN Blocked.";
-            stat.innerText = "NETWORK ERROR";
-            stat.style.color = "red";
+        jq.onerror = function() {
+            document.getElementById('box-jquery').innerText = "2. JQUERY BLOCKED";
+            document.getElementById('box-jquery').classList.add("fail");
+            loadDaily(); // Try next anyway
         };
+        document.body.appendChild(jq);
 
-        // Inject the script
-        document.body.appendChild(script);
-
-        // --- 3. MAIN APP LOGIC ---
-        function initApp() {
-            var params = new URLSearchParams(window.location.search);
-            var MODE = params.get('mode');
-            var rawURL = params.get('url') || "";
-            var targetURL = rawURL.trim().replace(/"/g, '');
-            var NAME = params.get('name') || "Smart-Viewer";
-            
-            var standby = document.getElementById('standby');
-            var container = document.getElementById('container');
-            
-            // Set Messages
-            var customMsg = "Ready.";
-            if (MODE === 'face') customMsg = "Awaiting instructor's camera";
-            if (MODE === 'screen') customMsg = "Awaiting instructor's screen share";
-            if (MODE === 'tablet') customMsg = "Connecting Tablet Uplink...";
-            stat.innerText = customMsg;
-
-            if (!targetURL) { stat.innerText = "CONFIG ERROR: No URL"; return; }
-
-            try {
-                // Initialize Daily
-                var call = window.DailyIframe.createCallObject({
-                    dailyConfig: { experimentalChromeVideoMuteLightOff: true }
-                });
-
-                call.on('track-started', handleVideoStart);
-                call.on('track-stopped', handleVideoStop);
-                call.on('error', (e) => { stat.innerText = "Call Error: " + (e.errorMsg || e); });
-
-                // Join (Triple Chrome Logic)
-                let isSender = (MODE === 'tablet' || MODE === 'face');
-                call.join({ 
-                    url: targetURL, 
-                    userName: NAME, 
-                    audioSource: isSender, 
-                    videoSource: isSender 
-                });
-
-            } catch(e) { 
-                stat.innerText = "Crash: " + e.message; 
-            }
-
-            // --- FILTER LOGIC (v16.3) ---
-            function handleVideoStart(e) {
-                var p = e.participant;
-                var track = e.track;
-
-                if (!p || !track) return;
-                if (p.local && MODE !== 'tablet') return; 
-                if (track.kind !== 'video') return; 
-
-                if (MODE === 'face') {
-                    if (p.user_name.indexOf("Tablet") !== -1) return; 
-                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) return; } catch(err) {}
-                }
-
-                if (MODE === 'screen') {
-                    var isScreen = false;
-                    try { if (p.tracks.screenVideo?.persistentTrack?.id === track.id) isScreen = true; } catch(err) {}
-                    if (!isScreen) return; 
-                }
-
-                standby.style.display = 'none';
-                container.innerHTML = ''; 
-                var el = document.createElement('video');
-                el.srcObject = new MediaStream([e.track]);
-                el.autoplay = true; el.muted = true;
-                container.appendChild(el);
-                
-                e.track.onended = () => { standby.style.display = 'block'; };
-            }
-
-            function handleVideoStop() {
-                if (container.hasChildNodes()) {
-                    standby.style.display = 'block';
-                    container.innerHTML = '';
-                }
-            }
+        // --- TEST 3: DAILY (Target File) ---
+        function loadDaily() {
+            var d = document.createElement('script');
+            d.src = "https://unpkg.com/@daily-co/daily-js";
+            d.onload = function() {
+                document.getElementById('box-daily').innerText = "3. DAILY SUCCESS";
+                document.getElementById('box-daily').classList.add("success");
+            };
+            d.onerror = function() {
+                document.getElementById('box-daily').innerText = "3. DAILY BLOCKED";
+                document.getElementById('box-daily').classList.add("fail");
+            };
+            document.body.appendChild(d);
         }
     </script>
 </body>
