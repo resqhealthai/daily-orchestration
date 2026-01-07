@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Viewer v16.2</title>
+    <title>Smart Viewer v16.3</title>
     <style>
         body { 
             background: #000; margin: 0; overflow: hidden; height: 100vh; 
@@ -79,12 +79,12 @@
                 call.on('track-stopped', handleVideoStop);
                 call.on('error', (e) => { stat.innerText = "ERR: " + (e.errorMsg || e); });
 
-                // 2. JOIN ATTEMPT
+                // 2. JOIN ATTEMPT (FAIL-SAFE)
                 let isSender = (MODE === 'tablet' || MODE === 'face');
                 try {
                     await call.join({ url: targetURL, userName: NAME, audioSource: isSender, videoSource: isSender });
                 } catch (joinError) {
-                    console.error("Primary Join Failed", joinError);
+                    console.error("Join Failed", joinError);
                     stat.innerText = "CAMERA BLOCKED. RETRYING PASSIVE...";
                     await call.join({ url: targetURL, userName: NAME, audioSource: false, videoSource: false });
                     if (isSender) retryBtn.style.display = "inline-block";
@@ -92,4 +92,47 @@
             } catch(e) { stat.innerText = "CRASH: " + e.message; }
         }
 
-        function
+        function enableCamera() {
+            if (call) {
+                retryBtn.innerText = "ACTIVATING...";
+                call.setLocalVideo(true).then(() => retryBtn.style.display = 'none');
+            }
+        }
+
+        // --- THE ROBUST LOGIC (V16.3) ---
+        function handleVideoStart(e) {
+            var p = e.participant;
+            var track = e.track;
+
+            // 1. GLOBAL SAFETY CHECKS
+            if (p.local && MODE !== 'tablet') return; // Ignore self
+            if (track.kind !== 'video') return; // Ignore audio
+
+            // 2. MONITOR 1 (FACE) LOGIC
+            if (MODE === 'face') {
+                // RULE A: Ignore "Tablet" users (Fixes the Ghost Feed)
+                if (p.user_name.indexOf("Tablet") !== -1) return;
+                
+                // RULE B: Ignore Screen Shares (Fixes the Screen duplication)
+                // We verify this is the 'video' track, not 'screenVideo'
+                var isScreenTrack = false;
+                try {
+                    if (p.tracks.screenVideo && p.tracks.screenVideo.persistentTrack && 
+                        p.tracks.screenVideo.persistentTrack.id === track.id) {
+                        isScreenTrack = true;
+                    }
+                } catch(err) { console.log("Track check error", err); }
+
+                if (isScreenTrack) return; // If it's a screen, IGNORE IT.
+            }
+
+            // 3. MONITOR 2 (SCREEN) LOGIC
+            if (MODE === 'screen') {
+                // RULE: ONLY show if this specific track is the Screen Track
+                var isScreenTrack = false;
+                try {
+                    if (p.tracks.screenVideo && p.tracks.screenVideo.persistentTrack && 
+                        p.tracks.screenVideo.persistentTrack.id === track.id) {
+                        isScreenTrack = true;
+                    }
+                } catch(err) { console.log("Track check error
